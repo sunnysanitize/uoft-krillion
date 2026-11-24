@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { api, Daily, FinishResult, GuessResult, Leaderboard } from "./api";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { api, CheckResult, Daily, FinishResult, GuessResult, Leaderboard } from "./api";
 import { diverName, dropOf, persist, playerId, storage, toneOf, zoneAt, type Tone } from "./game";
 
 export type Phase = "loading" | "intro" | "play" | "flash" | "done" | "error";
@@ -42,6 +42,7 @@ export function useDive() {
   const [saved, setSaved] = useState<Saved>({ results: [], startedAt: null, nickname: "" });
   const [now, setNow] = useState(() => Date.now());
   const [submitting, setSubmitting] = useState(false);
+  const submission = useRef(false);
   const [finish, setFinish] = useState<FinishResult | null>(null);
   const [board, setBoard] = useState<Leaderboard | null>(null);
 
@@ -86,11 +87,23 @@ export function useDive() {
   }, []);
 
   const submit = useCallback(
-    async (text: string) => {
-      if (!daily || !prompt || submitting) return;
+    async (text: string, force = false): Promise<CheckResult | null> => {
+      if (!daily || !prompt || phase !== "play" || submission.current) return null;
+      submission.current = true;
       setSubmitting(true);
+      const sentAt = Date.now();
       try {
-        const r = await api.guess(playerId(), prompt.id, text);
+        const response = force
+          ? { accepted: true as const, result: await api.guess(playerId(), prompt.id, text) }
+          : await api.attempt(playerId(), prompt.id, text);
+        if (!response.accepted) {
+          // Server latency must not consume the time available for another try.
+          const receivedAt = Date.now();
+          setNow(receivedAt);
+          update({ ...saved, startedAt: saved.startedAt === null ? null : saved.startedAt + receivedAt - sentAt });
+          return response.check;
+        }
+        const r = response.result;
         const result = { ...r, raw: text };
         const next = { ...saved, results: [...saved.results, result], startedAt: null };
         update(next);
@@ -103,23 +116,26 @@ export function useDive() {
           update({ ...next, startedAt: t });
           setPhase("play");
         }, flashMs(result));
+        return null;
       } catch {
         setPhase("error");
+        return null;
       } finally {
+        submission.current = false;
         setSubmitting(false);
       }
     },
-    [daily, prompt, saved, submitting, update],
+    [daily, prompt, saved, phase, update],
   );
 
   const limitMs = (daily?.time_limit ?? 20) * 1000;
   const remaining = saved.startedAt ? Math.max(0, limitMs - (now - saved.startedAt)) : limitMs;
 
   useEffect(() => {
-    if (phase !== "play") return;
+    if (phase !== "play" || submitting) return;
     const t = setInterval(() => setNow(Date.now()), 100);
     return () => clearInterval(t);
-  }, [phase, idx]);
+  }, [phase, idx, submitting]);
 
   const [sonarLost, setSonarLost] = useState(false);
   const [attempt, setAttempt] = useState(0);

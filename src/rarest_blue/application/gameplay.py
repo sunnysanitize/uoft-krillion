@@ -83,6 +83,15 @@ class GameService:
         return CheckOutcome(recognized=recognized, correct=correct, suggestion=suggestion)
 
     def guess(self, player_id: str, prompt_id: str, raw: str) -> GuessOutcome:
+        out = self._submit(player_id, prompt_id, raw, retry_wrong=False)
+        assert isinstance(out, GuessOutcome)
+        return out
+
+    def attempt(self, player_id: str, prompt_id: str, raw: str) -> GuessOutcome | CheckOutcome:
+        """Check and record a right answer in one transaction; wrong answers can retry."""
+        return self._submit(player_id, prompt_id, raw, retry_wrong=True)
+
+    def _submit(self, player_id: str, prompt_id: str, raw: str, *, retry_wrong: bool) -> GuessOutcome | CheckOutcome:
         day = self._clock()
         with self._uow() as uow:
             prompt = _find(prompts_for(uow, day), prompt_id)
@@ -91,6 +100,10 @@ class GameService:
             scored = uow.guesses.find(day, prompt_id, player_id)
             if scored is None:
                 answer = match_answer(prompt, raw)
+                if retry_wrong:
+                    recognized, suggestion = recognize(prompt, raw)
+                    if not recognized or answer is None:
+                        return CheckOutcome(recognized=recognized, correct=False, suggestion=suggestion)
                 share = scoring.share_of(answer, scoring.answer_counts(prompt, uow.guesses.tallies(day, prompt_id)))
                 scored = ScoredGuess(answer=answer, points=scoring.points_for(prompt, answer, share), share=share)
                 uow.guesses.add(day, prompt_id, player_id, raw, scored)

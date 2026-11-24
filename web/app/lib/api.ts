@@ -7,6 +7,10 @@ export type Prompt = {
 /** Whether a typed answer is one the game knows, whether it's right, and else a "did you mean". */
 export type CheckResult = { recognized: boolean; correct: boolean; suggestion: string | null };
 
+export type AttemptResult =
+  | { accepted: true; result: GuessResult }
+  | { accepted: false; check: CheckResult };
+
 export type Daily = {
   day: string;
   number: number;
@@ -43,6 +47,12 @@ export type Leaderboard = {
   players: { nickname: string; score: number }[];
 };
 
+class ApiError extends Error {
+  constructor(path: string, readonly status: number) {
+    super(`${path} failed (${status})`);
+  }
+}
+
 async function call<T>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(`/api/${path}`, {
     method: body ? "POST" : "GET",
@@ -50,7 +60,7 @@ async function call<T>(path: string, body?: unknown): Promise<T> {
     body: body ? JSON.stringify(body) : undefined,
     cache: "no-store",
   });
-  if (!res.ok) throw new Error(`${path} failed (${res.status})`);
+  if (!res.ok) throw new ApiError(path, res.status);
   return res.json();
 }
 
@@ -59,6 +69,17 @@ export const api = {
   check: (prompt_id: string, answer: string) => call<CheckResult>("check", { prompt_id, answer }),
   guess: (player_id: string, prompt_id: string, answer: string) =>
     call<GuessResult>("guess", { player_id, prompt_id, answer }),
+  attempt: async (player_id: string, prompt_id: string, answer: string): Promise<AttemptResult> => {
+    try {
+      return await call<AttemptResult>("attempt", { player_id, prompt_id, answer });
+    } catch (error) {
+      // Frontend and backend deploy separately. Support the old API during rollout.
+      if (!(error instanceof ApiError) || (error.status !== 404 && error.status !== 405)) throw error;
+      const check = await api.check(prompt_id, answer);
+      if (!check.correct) return { accepted: false, check };
+      return { accepted: true, result: await api.guess(player_id, prompt_id, answer) };
+    }
+  },
   answers: (player_id: string, prompt_id: string) =>
     call<{ answers: AnswerRow[] }>("answers", { player_id, prompt_id }).then((r) => r.answers),
   finish: (player_id: string, nickname: string) => call<FinishResult>("finish", { player_id, nickname }),

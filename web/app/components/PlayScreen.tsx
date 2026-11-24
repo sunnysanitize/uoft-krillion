@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { api, type Prompt } from "../lib/api";
+import { type CheckResult, type Prompt } from "../lib/api";
 import { TimerDial } from "./TimerDial";
 import { Label, PixelButton } from "./ui";
 
@@ -20,10 +20,9 @@ export function PlayScreen({
   remaining: number;
   limit: number;
   submitting: boolean;
-  onSubmit: (answer: string) => void;
+  onSubmit: (answer: string, force?: boolean) => Promise<CheckResult | null>;
 }) {
   const [answer, setAnswer] = useState("");
-  const [checking, setChecking] = useState(false);
   // After Enter: a "did you mean" to accept with Enter again, or a rejection to retype.
   const [suggestion, setSuggestion] = useState<string | null>(null);
   // A miss to show and shake: unrecognized, or recognized but wrong. `n` re-triggers the shake.
@@ -37,37 +36,32 @@ export function PlayScreen({
     input.current?.focus();
   }, [prompt.id]);
 
+  useEffect(() => {
+    if (!submitting) input.current?.focus();
+  }, [submitting]);
+
   // Out of air: send whatever is typed (possibly nothing) exactly once.
   const fired = useRef<string | null>(null);
   useEffect(() => {
-    if (remaining <= 0 && fired.current !== prompt.id) {
+    if (!submitting && remaining <= 0 && fired.current !== prompt.id) {
       fired.current = prompt.id;
-      onSubmit(answer);
+      onSubmit(answer, true);
     }
-  }, [remaining, prompt.id, answer, onSubmit]);
+  }, [remaining, prompt.id, answer, onSubmit, submitting]);
 
-  // Only recognized answers spend the prompt; anything else gets a suggestion or a retry.
   // Only right answers spend the prompt. Wrong ones get another go until the clock runs out.
   async function dive(typed: string) {
-    if (!typed.trim() || submitting || checking) return;
+    if (!typed.trim() || submitting) return;
     // Taking a "did you mean" still goes through the check, so it can't sneak a wrong answer in.
     const text = suggestion ?? typed;
     if (suggestion) {
       setAnswer(suggestion);
       setSuggestion(null);
     }
-    setChecking(true);
-    try {
-      const r = await api.check(prompt.id, text);
-      if (r.correct) return onSubmit(text);
-      if (!r.recognized && r.suggestion) return setSuggestion(r.suggestion);
-      setRejected((prev) => ({ text, wrong: r.recognized, n: (prev?.n ?? 0) + 1 }));
-    } catch {
-      onSubmit(text); // can't check right now: let the server judge it
-    } finally {
-      setChecking(false);
-      input.current?.focus();
-    }
+    const r = await onSubmit(text);
+    if (!r) return;
+    if (!r.recognized && r.suggestion) setSuggestion(r.suggestion);
+    else setRejected((prev) => ({ text, wrong: r.recognized, n: (prev?.n ?? 0) + 1 }));
   }
 
   return (
@@ -86,6 +80,7 @@ export function PlayScreen({
 
       <form
         className="fixed inset-x-0 bottom-0 z-30 px-3 pb-5 pt-3 sm:px-5"
+        aria-busy={submitting}
         onSubmit={(e) => {
           e.preventDefault();
           dive(answer);
@@ -142,8 +137,8 @@ export function PlayScreen({
                 />
               </div>
             </div>
-            <PixelButton disabled={submitting || checking || !answer.trim()} className="self-start px-3.5! text-base! sm:px-7! sm:text-lg!">
-              Dive
+            <PixelButton disabled={submitting || !answer.trim()} className="self-start min-w-24 px-3.5! text-base! sm:px-7! sm:text-lg!">
+              {submitting ? "Diving…" : "Dive"}
             </PixelButton>
           </div>
         </div>

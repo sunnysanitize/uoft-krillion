@@ -4,7 +4,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from ...application.gameplay import GameService, NotPlayedYet, UnknownPrompt
+from ...application.gameplay import CheckOutcome, GameService, GuessOutcome, NotPlayedYet, UnknownPrompt
 from ...domain import days, rules, scoring
 from .schemas import CheckIn, FinishIn, GuessIn, PlayerIn, PlayerPromptIn
 
@@ -51,6 +51,24 @@ def guess(body: GuessIn, game: Game):
         out = game.guess(body.player_id, body.prompt_id, body.answer)
     except UnknownPrompt:
         raise HTTPException(400, UNKNOWN_PROMPT) from None
+    return _guess_response(out)
+
+
+@router.post("/attempt")
+def attempt(body: GuessIn, game: Game):
+    try:
+        out = game.attempt(body.player_id, body.prompt_id, body.answer)
+    except UnknownPrompt:
+        raise HTTPException(400, UNKNOWN_PROMPT) from None
+    if isinstance(out, CheckOutcome):
+        return {
+            "accepted": False,
+            "check": {"recognized": out.recognized, "correct": False, "suggestion": out.suggestion},
+        }
+    return {"accepted": True, "result": _guess_response(out)}
+
+
+def _guess_response(out: GuessOutcome) -> dict:
     g = out.guess
     return {
         "valid": out.valid,

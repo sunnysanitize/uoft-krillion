@@ -81,6 +81,54 @@ def test_fallback_locks_the_day(client, uow):
         assert [p.id for p in tx.prompts.get(today)] == [p.id for p in days.pick_fallback(today, PROMPTS)]
 
 
+def test_attempt_checks_and_records_a_correct_answer_in_one_request(client, uow):
+    pid = client.get("/api/daily").json()["prompts"][0]["id"]
+    prompt = PROMPTS_BY_ID[pid]
+    body = {"player_id": "player-aaaa", "prompt_id": pid, "answer": prompt.answers[0][0]}
+    response = client.post("/api/attempt", json=body)
+    assert response.status_code == 200
+    result = response.json()
+    assert result["accepted"] and result["result"]["valid"]
+    assert result["result"]["answer"] == body["answer"]
+    # Retrying a request returns the original score and never adds another guess.
+    again = client.post("/api/attempt", json={**body, "answer": prompt.golden}).json()
+    assert again["result"]["answer"] == body["answer"]
+    assert again["result"]["points"] == result["result"]["points"]
+    with uow() as tx:
+        assert tx.guesses.player_count(days.today(), pid) == 1
+
+
+def test_attempt_rejects_wrong_answers_without_spending_the_prompt(client, uow):
+    pid = client.get("/api/daily").json()["prompts"][0]["id"]
+    prompt = PROMPTS_BY_ID[pid]
+    body = {"player_id": "player-aaaa", "prompt_id": pid, "answer": prompt.decoys[0]}
+    assert client.post("/api/attempt", json=body).json() == {
+        "accepted": False,
+        "check": {"recognized": True, "correct": False, "suggestion": None},
+    }
+    unknown = client.post("/api/attempt", json={**body, "answer": "zzzzzz"}).json()
+    assert unknown == {"accepted": False, "check": {"recognized": False, "correct": False, "suggestion": None}}
+    with uow() as tx:
+        assert tx.guesses.find(days.today(), pid, body["player_id"]) is None
+    correct = client.post("/api/attempt", json={**body, "answer": prompt.golden}).json()
+    assert correct["accepted"] and correct["result"]["golden"]
+
+
+def test_attempt_offers_suggestions_and_preserves_timeout_submission(client, uow):
+    with uow() as tx:
+        tx.prompts.add(days.today(), [PROMPTS_BY_ID["colleges"]], source="test")
+    body = {"player_id": "player-aaaa", "prompt_id": "colleges", "answer": "Woodsworht"}
+    result = client.post("/api/attempt", json=body).json()
+    assert result == {
+        "accepted": False,
+        "check": {"recognized": False, "correct": False, "suggestion": "Woodsworth College"},
+    }
+    timed_out = client.post("/api/guess", json={**body, "answer": ""}).json()
+    assert not timed_out["valid"] and timed_out["points"] == 0
+    unknown = client.post("/api/attempt", json={**body, "prompt_id": "missing"})
+    assert unknown.status_code == 400
+
+
 def test_answers_list_only_after_playing(client):
     pid = client.get("/api/daily").json()["prompts"][0]["id"]
 

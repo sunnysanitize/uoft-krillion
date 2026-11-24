@@ -27,6 +27,13 @@ ZONES = [
 ]
 
 _FILLER = {"the", "of", "and", "a", "at", "uoft", "u", "t"}
+# Trailing words players often add or leave off ("Spadina Station", "Innis Library").
+_GENERIC = {
+    "library", "hall", "building", "centre", "center", "college", "street", "avenue", "ave", "road", "station",
+    "house", "residence", "school", "faculty", "university", "laboratory", "laboratories", "lab", "labs",
+}
+# Shortest guess that may stand in for a longer answer it starts ("Bahen" for "Bahen Centre").
+MIN_PREFIX_CHARS = 4
 
 
 def normalize(text: str) -> str:
@@ -53,12 +60,27 @@ def match_answer(prompt: Prompt, guess: str) -> str | None:
     index = _alias_index(prompt)
     if key in index:
         return index[key]
+    key = _strip_generic(key)
+    if key in index:
+        return index[key]
+    # A distinctive leading part of exactly one answer counts ("Sidney Smith" for "Sidney Smith Hall").
+    if len(key) >= MIN_PREFIX_CHARS and not set(key.split()) <= _GENERIC:
+        hits = {canon for alias, canon in index.items() if alias.startswith(key + " ")}
+        if len(hits) == 1:
+            return hits.pop()
     # Forgive small typos on longer answers only, so "MAT" can't fuzz into "MAT137".
     if len(key) >= 5:
         close = difflib.get_close_matches(key, index.keys(), n=1, cutoff=0.85)
         if close:
             return index[close[0]]
     return None
+
+
+def _strip_generic(key: str) -> str:
+    words = key.split()
+    while len(words) > 1 and words[-1] in _GENERIC:
+        words.pop()
+    return " ".join(words)
 
 
 def today() -> date:
@@ -69,8 +91,11 @@ def puzzle_number(day: date) -> int:
     return (day - LAUNCH_DATE).days + 1
 
 
-def daily_prompts(day: date) -> list[Prompt]:
-    """Deterministically pick the day's prompts so everyone plays the same set."""
+def fallback_prompts(day: date) -> list[Prompt]:
+    """Deterministically pick a day's prompts from the built-in bank.
+
+    Used when the nightly generator didn't produce a set for the day.
+    """
     def rank(p: Prompt) -> str:
         return hashlib.sha256(f"{day.isoformat()}:{p.id}".encode()).hexdigest()
 

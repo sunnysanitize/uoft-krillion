@@ -2,22 +2,44 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { api, Daily, FinishResult, GuessResult, Leaderboard } from "./api";
-import { persist, playerId, storage, zoneAt } from "./game";
+import { diverName, dropOf, persist, playerId, storage, toneOf, zoneAt, type Tone } from "./game";
 
-export type Phase = "loading" | "intro" | "play" | "reveal" | "done" | "error";
+export type Phase = "loading" | "intro" | "play" | "flash" | "done" | "error";
+
+// How long the camera takes to sink after an answer: short for every tier, a touch longer the deeper.
+export const SINK_MS = 1800;
+const SINK: Record<Tone, number> = { miss: 600, common: 1200, uncommon: 1400, rare: 1700, deepcut: 2100, golden: 2500 };
+export const sinkMs = (r: GuessResult) => SINK[toneOf(r)];
+
+// How the drop feels. A Common is an awkward little plop: it hesitates, bobs up, drops a touch too
+// far, and settles back. From Uncommon up the camera builds speed as it falls, exponentially harder
+// the higher the tier, then brakes and glides into its new depth rather than stopping dead.
+export const SINK_EASE = "cubic-bezier(.45,.05,.2,1)";
+const PLUNGE: Partial<Record<Tone, string>> = {
+  common: "cubic-bezier(.6,-0.6,.35,1.7)",
+  uncommon: "cubic-bezier(.55,0,.3,1)",
+  rare: "cubic-bezier(.7,0,.25,1)",
+  deepcut: "cubic-bezier(.8,0,.2,1)",
+  golden: "cubic-bezier(.87,0,.15,1)",
+};
+export const sinkEase = (r: GuessResult) => PLUNGE[toneOf(r)] ?? SINK_EASE;
+
+// The verdict and creature show the moment you answer, while the drop plays behind them; One in a
+// Krillion lingers. The beat lasts at least until the drop has landed, then the next clock starts.
+export const verdictMs = (r: GuessResult) => Math.max(sinkMs(r) + 900, r.golden ? 3000 : 2600);
+export const flashMs = verdictMs;
 
 type Saved = {
   results: GuessResult[];
   startedAt: number | null;
   nickname: string;
-  college: string | null;
 };
 
 /** All game state and server calls for one day's dive. Screens stay presentational. */
 export function useDive() {
   const [daily, setDaily] = useState<Daily | null>(null);
   const [phase, setPhase] = useState<Phase>("loading");
-  const [saved, setSaved] = useState<Saved>({ results: [], startedAt: null, nickname: "", college: null });
+  const [saved, setSaved] = useState<Saved>({ results: [], startedAt: null, nickname: "" });
   const [now, setNow] = useState(() => Date.now());
   const [submitting, setSubmitting] = useState(false);
   const [finish, setFinish] = useState<FinishResult | null>(null);
@@ -27,7 +49,7 @@ export function useDive() {
   const prompt = daily?.prompts[idx];
   const mpp = daily?.meters_per_point ?? 10;
   const score = saved.results.reduce((s, r) => s + r.points, 0);
-  const depth = score * mpp;
+  const depth = saved.results.reduce((d, r) => d + dropOf(r), 0);
   const zone = daily ? zoneAt(daily.zones, depth) : null;
   const saveKey = daily ? `rb:dive:${daily.day}` : null;
 
@@ -47,14 +69,18 @@ export function useDive() {
         const s = storage<Saved>(`rb:dive:${d.day}`, {
           results: [],
           startedAt: null,
-          nickname: storage("rb:nickname", ""),
-          college: storage<string | null>("rb:college", null),
+          nickname: storage("rb:nickname", "") || diverName(),
         });
         setSaved(s);
         if (s.results.length >= d.prompts.length) setPhase("done");
         else if (s.startedAt) setPhase("play"); // refreshing doesn't reset the clock
-        else if (s.results.length > 0) setPhase("reveal");
-        else setPhase("intro");
+        else if (s.results.length > 0) {
+          // Left between prompts: pick up at the next one with a fresh clock.
+          const resumed = { ...s, startedAt: Date.now() };
+          setSaved(resumed);
+          persist(`rb:dive:${d.day}`, resumed);
+          setPhase("play");
+        } else setPhase("intro");
       })
       .catch(() => setPhase("error"));
   }, []);
@@ -65,8 +91,18 @@ export function useDive() {
       setSubmitting(true);
       try {
         const r = await api.guess(playerId(), prompt.id, text);
-        update({ ...saved, results: [...saved.results, { ...r, raw: text }], startedAt: null });
-        setPhase("reveal");
+        const result = { ...r, raw: text };
+        const next = { ...saved, results: [...saved.results, result], startedAt: null };
+        update(next);
+        // Flash the verdict, then the next prompt (its clock starts now) or the results.
+        setPhase("flash");
+        setTimeout(() => {
+          if (next.results.length >= daily.prompts.length) return setPhase("done");
+          const t = Date.now();
+          setNow(t);
+          update({ ...next, startedAt: t });
+          setPhase("play");
+        }, flashMs(result));
       } catch {
         setPhase("error");
       } finally {
@@ -94,7 +130,7 @@ export function useDive() {
     const name = saved.nickname.trim() || "anon goose";
     setSonarLost(false);
     api
-      .finish(playerId(), name, saved.college)
+      .finish(playerId(), name)
       .then(setFinish)
       .catch(() => setSonarLost(true))
       .finally(() =>
@@ -103,33 +139,25 @@ export function useDive() {
           .then(setBoard)
           .catch(() => setSonarLost(true)),
       );
-  }, [phase, daily, saved.nickname, saved.college, attempt]);
+  }, [phase, daily, saved.nickname, attempt]);
 
   const retrySonar = () => setAttempt((n) => n + 1);
 
-  function next() {
+  function begin() {
     if (!daily) return;
-    if (idx >= daily.prompts.length) return setPhase("done");
+    persist("rb:nickname", saved.nickname);
     const t = Date.now();
     setNow(t);
     update({ ...saved, startedAt: t });
     setPhase("play");
   }
 
-  function begin() {
-    persist("rb:nickname", saved.nickname);
-    persist("rb:college", saved.college);
-    next();
-  }
-
-  const setProfile = (p: Partial<Pick<Saved, "nickname" | "college">>) => setSaved({ ...saved, ...p });
 
   return {
     daily,
     phase,
     results: saved.results,
     nickname: saved.nickname,
-    college: saved.college,
     idx,
     prompt,
     mpp,
@@ -144,9 +172,7 @@ export function useDive() {
     sonarLost,
     retrySonar,
     submit,
-    next,
     begin,
-    setProfile,
   };
 }
 

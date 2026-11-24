@@ -19,6 +19,7 @@ services:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/postgres
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       CORS_ORIGINS: http://localhost:3000
+      DEV_RESET: "1" # enables /api/dev/reset for the dev-mode reset button
     ports:
       - "8000:8080"
     depends_on:

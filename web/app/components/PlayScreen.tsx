@@ -72,7 +72,7 @@ export function PlayScreen({
           <Label className="text-sonar">
             Prompt {index + 1} of {total}
           </Label>
-          <h1 className="mt-3 text-balance font-pixel text-[clamp(1.75rem,5vw,3rem)] font-medium leading-[1.08]">{prompt.text}</h1>
+          <h1 className="mt-3 text-balance font-pixel text-[clamp(1.75rem,5vw,3rem)] font-medium leading-[1.18]">{prompt.text}</h1>
           <p className="mt-4 text-sm text-mist">▼ {prompt.hint} ▼</p>
         </section>
         </div>

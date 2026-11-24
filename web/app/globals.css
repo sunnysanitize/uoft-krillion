@@ -13,8 +13,8 @@
   --color-uoft: #1e3765;
   --color-line: #24406e;
   --color-ink: #eef2f8;
-  --color-mist: #8da0bf;
-  --color-slate: #6b7fa3;
+  --color-mist: #a6b6cf;
+  --color-slate: #879abc;
   --color-foam: #a9d8ee;
   --color-sonar: #3fb4d8;
   --color-lightblue: #007fa3;
@@ -229,9 +229,11 @@
     background: var(--color-abyss);
     color: var(--color-ink);
     font-family: var(--font-mono);
-    -webkit-font-smoothing: antialiased;
+    -webkit-font-smoothing: auto;
     overflow-x: hidden;
   }
+  /* Keep the pixel face, with slightly stronger strokes for small labels and readouts. */
+  .font-pixel { font-weight: 500; }
   ::selection { background: var(--color-lightblue); color: var(--color-ink); }
   :focus-visible { outline: 2px solid var(--color-sonar); outline-offset: 2px; }
   img.pixel { image-rendering: pixelated; }
@@ -270,7 +272,7 @@
   inset: 0;
   z-index: 50;
   pointer-events: none;
-  background: repeating-linear-gradient(180deg, transparent 0 2px, rgb(0 0 0 / 0.16) 2px 3px);
+  background: repeating-linear-gradient(180deg, transparent 0 2px, rgb(0 0 0 / 0.06) 2px 3px);
 }
 
 /* Segmented "pixel" bar fill: 6px blocks with 2px gaps. */

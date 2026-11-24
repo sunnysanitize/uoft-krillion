@@ -41,8 +41,8 @@ export function IntroScreen({
           <span className="inline-block w-[0.3em]" />
           <WavyText text="Krillion" offset={5} />
         </h1>
-        <p className="mt-5 float-in float-in-3 font-pixel text-lg uppercase tracking-[0.35em] text-uoft/80 sm:text-xl">Deeper dive into UofT</p>
-        <p className="mt-3 float-in float-in-4 text-sm text-uoft/70">
+        <p className="mt-5 float-in float-in-3 font-pixel text-lg uppercase tracking-[0.24em] text-uoft sm:text-xl">Deeper dive into UofT</p>
+        <p className="mt-3 float-in float-in-4 text-sm text-uoft/90">
           {daily.prompts.length} prompts · {daily.time_limit} seconds each · rarer answers sink deeper
         </p>
       </header>

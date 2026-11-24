@@ -2,7 +2,7 @@ import type { ButtonHTMLAttributes, ReactNode } from "react";
 
 /** Small tracked uppercase caption used for every HUD and section label. */
 export function Label({ children, className = "" }: { children: ReactNode; className?: string }) {
-  return <div className={`text-[11px] uppercase tracking-[0.32em] text-mist ${className}`}>{children}</div>;
+  return <div className={`text-xs font-medium uppercase tracking-[0.22em] text-mist ${className}`}>{children}</div>;
 }
 
 type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & { variant?: "primary" | "ghost" };
@@ -19,7 +19,7 @@ export function PixelButton({ variant = "primary", className = "", ...props }: B
   return (
     <button
       {...props}
-      className={`font-pixel text-lg uppercase tracking-[0.2em] border-2 px-6 py-3 shadow-block transition-[transform,box-shadow,background-color,border-color] duration-75 active:translate-x-1 active:translate-y-1 active:shadow-none disabled:pointer-events-none disabled:opacity-40 cursor-pointer ${look} ${className}`}
+      className={`font-pixel text-lg uppercase tracking-[0.14em] border-2 px-6 py-3 shadow-block transition-[transform,box-shadow,background-color,border-color] duration-75 active:translate-x-1 active:translate-y-1 active:shadow-none disabled:pointer-events-none disabled:opacity-40 cursor-pointer ${look} ${className}`}
     />
   );
 }

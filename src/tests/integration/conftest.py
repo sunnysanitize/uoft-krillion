@@ -14,7 +14,7 @@ TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
 def settings() -> Settings:
     if not TEST_DATABASE_URL:
         pytest.skip("set TEST_DATABASE_URL to run database tests")
-    return Settings(database_url=TEST_DATABASE_URL, openrouter_models=["model-a", "model-b"])
+    return Settings(database_url=TEST_DATABASE_URL, generator_model="gen-model", verifier_model="check-model")
 
 
 @pytest.fixture

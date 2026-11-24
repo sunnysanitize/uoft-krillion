@@ -2,7 +2,7 @@ from rarest_blue.application import generation
 from rarest_blue.domain import days, rules
 from rarest_blue.domain.models import Prompt
 from rarest_blue.domain.prompt_bank import PROMPTS, PROMPTS_BY_ID
-from tests.factories import gen_set
+from tests.factories import all_clear, gen_set
 
 
 def _guess(client, player, pid, answer):
@@ -50,7 +50,7 @@ def test_daily_payload_shape_is_stable(client):
 
 def test_serves_stored_set(client, uow):
     today = days.today()
-    prompts = generation.clean_set(gen_set())
+    prompts = generation.pick_set(generation.check_candidates(gen_set(), all_clear(gen_set())), [])
     with uow() as tx:
         assert tx.prompts.add(today, prompts, source="test")
 

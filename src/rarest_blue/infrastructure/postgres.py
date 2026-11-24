@@ -78,11 +78,11 @@ class PostgresPromptRepository:
             "UPDATE daily_prompts SET prompts = %s WHERE day = %s", (Jsonb([p.to_dict() for p in prompts]), _key(day))
         )
 
-    def recent_texts(self, before: date, days: int) -> list[str]:
+    def recent(self, before: date, days: int) -> list[Prompt]:
         rows = self._conn.execute(
             "SELECT prompts FROM daily_prompts WHERE day < %s ORDER BY day DESC LIMIT %s", (_key(before), days)
         )
-        return [p["text"] for row in rows for p in row["prompts"]]
+        return [Prompt.from_dict(p) for row in rows for p in row["prompts"]]
 
 
 class PostgresGuessRepository:

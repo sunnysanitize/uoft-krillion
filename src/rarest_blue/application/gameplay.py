@@ -124,8 +124,9 @@ class GameService:
                     recognized, suggestion = recognize(prompt, raw)
                     if not recognized or answer is None:
                         return CheckOutcome(recognized=recognized, correct=False, suggestion=suggestion)
-                share = scoring.share_of(answer, scoring.answer_counts(prompt, uow.guesses.tallies(day, prompt_id)))
-                scored = ScoredGuess(answer=answer, points=scoring.points_for(prompt, answer, share), share=share)
+                before = scoring.answer_counts(prompt, uow.guesses.tallies(day, prompt_id))
+                share = scoring.share_of(answer, before)
+                scored = ScoredGuess(answer=answer, points=scoring.points_for(prompt, answer, before), share=share)
                 uow.guesses.add(day, prompt_id, player_id, raw, scored)
 
             players = uow.guesses.player_count(day, prompt_id)
@@ -153,8 +154,8 @@ class GameService:
                 {
                     "answer": name,
                     "pct": round(100 * share, 1),
-                    "points": scoring.score(share, golden),
-                    "rarity": scoring.rarity_label(share, golden),
+                    "points": scoring.points_for(prompt, name, counts),
+                    "rarity": scoring.rarity_label(name, counts, golden),
                     "golden": golden,
                     "yours": name == played.answer,
                 }

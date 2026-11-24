@@ -66,6 +66,6 @@ def accept(uow: UnitOfWork, day: date, prompt_id: str, guess: str, as_answer: st
     total = sum(counts.values())
     for player_id, answer in fixed.items():
         share = counts[answer] / total
-        uow.guesses.set_score(day, prompt_id, player_id, scoring.points_for(prompt, answer, share), share)
+        uow.guesses.set_score(day, prompt_id, player_id, scoring.points_for(prompt, answer, counts), share)
     uow.finishes.recompute_scores(day, list(fixed))
     return len(fixed)

@@ -1,25 +1,10 @@
-"""The prompt bank.
+"""The built-in prompt bank: the fallback set, and the examples shown to the LLM.
 
-Each prompt lists its accepted answers roughly from most to least obvious.
-The first entry of each answer tuple is the canonical display name; the rest
-are aliases. List order seeds the starting popularity so the very first
-players of the day still get meaningful rarity scores. `golden` is the one
-hidden deep-cut answer per prompt that earns a bonus. `decoys` are wrong
-answers mixed into the autocomplete list so it doesn't give the answers away.
+Each prompt lists its accepted answers roughly from most to least obvious (see `Prompt`). List order seeds the
+starting popularity so the very first players of the day still get meaningful rarity scores.
 """
 
-from dataclasses import dataclass, field
-
-
-@dataclass(frozen=True)
-class Prompt:
-    id: str
-    text: str
-    hint: str
-    golden: str
-    answers: list[tuple[str, ...]] = field(default_factory=list)
-    decoys: list[str] = field(default_factory=list)
-
+from .models import Prompt
 
 PROMPTS: list[Prompt] = [
     Prompt(
@@ -599,25 +584,3 @@ PROMPTS: list[Prompt] = [
 ]
 
 PROMPTS_BY_ID: dict[str, Prompt] = {p.id: p for p in PROMPTS}
-
-
-def to_dict(prompt: Prompt) -> dict:
-    return {
-        "id": prompt.id,
-        "text": prompt.text,
-        "hint": prompt.hint,
-        "golden": prompt.golden,
-        "answers": [list(names) for names in prompt.answers],
-        "decoys": list(prompt.decoys),
-    }
-
-
-def from_dict(data: dict) -> Prompt:
-    return Prompt(
-        id=data["id"],
-        text=data["text"],
-        hint=data["hint"],
-        golden=data["golden"],
-        answers=[tuple(names) for names in data["answers"]],
-        decoys=data.get("decoys", []),
-    )

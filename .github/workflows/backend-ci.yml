@@ -1,0 +1,92 @@
+name: Backend CI
+
+# One check on PRs that touch the backend; also the gate inside "Backend deploy".
+on:
+  pull_request:
+    paths:
+      - "src/**"
+      - "supabase/**"
+      - "deploy/**"
+      - ".github/workflows/backend-*.yml"
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Lint, test, audit, build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 2s --health-retries 15
+    env:
+      PGURL: postgresql://postgres:postgres@localhost:5432
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: src/requirements.lock
+
+      - name: Install (same hashed lock as the image, plus tools)
+        working-directory: src
+        run: |
+          pip install --require-hashes --no-deps -r requirements.lock
+          pip install pytest==8.3.5 ruff==0.11.13 pip-audit==2.9.0
+
+      - name: Lint
+        working-directory: src
+        run: ruff check --output-format=github . && ruff format --check .
+
+      - name: Audit dependencies
+        run: pip-audit --strict --require-hashes --disable-pip -r src/requirements.lock
+
+      - name: Apply Supabase migrations in order (with Supabase's API roles, twice for idempotence)
+        run: |
+          psql "$PGURL/postgres" -v ON_ERROR_STOP=1 -c "CREATE DATABASE rarest_test"
+          psql "$PGURL/rarest_test" -v ON_ERROR_STOP=1 -c "CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN;
+            ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated;"
+          for _ in 1 2; do
+            for f in supabase/migrations/*.sql; do psql "$PGURL/rarest_test" -v ON_ERROR_STOP=1 -1 -f "$f"; done
+          done
+
+      - name: Test
+        working-directory: src
+        env:
+          TEST_DATABASE_URL: ${{ env.PGURL }}/rarest_test
+        run: pytest -q
+
+      - name: Lockdown still holds
+        env:
+          DATABASE_URL: ${{ env.PGURL }}/rarest_test
+        run: supabase/verify.sh
+
+      - name: Build and smoke-test the image
+        run: |
+          docker build -t rarest-blue:ci src
+          deploy/smoke-image.sh rarest-blue:ci "$PGURL/postgres"
+
+      - name: Manifests render
+        env:
+          PROJECT_ID: ci-project
+          IMAGE: example.invalid/rarest-blue@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          CORS_ORIGINS: https://example.invalid
+        run: |
+          for f in deploy/cloudrun/*.yaml; do
+            out=$(envsubst '${PROJECT_ID} ${IMAGE} ${CORS_ORIGINS}' < "$f")
+            if grep -q '\${' <<<"$out"; then echo "$f has an unrendered variable"; exit 1; fi
+          done

@@ -1,4 +1,6 @@
-fastapi==0.115.12
-uvicorn[standard]==0.34.2
+# Direct runtime deps. Edit here, then regenerate the hashed lock the image installs:
+#   uv pip compile requirements.txt --generate-hashes --python-version 3.13 --python-platform linux -o requirements.lock
+fastapi==0.165.0
+uvicorn[standard]==0.54.0
 psycopg[binary]==3.3.9
 httpx==0.28.1

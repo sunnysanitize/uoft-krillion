@@ -12,6 +12,13 @@ Fan-made. Not affiliated with the University of Toronto.
 
 - `src/`: Python (FastAPI + Postgres) backend. It holds answer matching, rarity scoring, leaderboards, and the nightly
   LLM job (via OpenRouter) that writes each day's prompts. The built-in prompt bank is the fallback when generation fails.
+  It's layered so that imports only point inward (`tests/unit/test_architecture.py` enforces this):
+  - `domain/`: game rules and entities in pure Python (matching, scoring, zones, the prompt bank)
+  - `application/`: use cases (play a day, generate a set, review guesses) and the ports they need
+  - `infrastructure/`: adapters for those ports (Postgres/Supabase, OpenRouter)
+  - `entrypoints/`: the HTTP API and the CLI jobs, which wire it all together
+- `supabase/`: the production database migration (locked away from Supabase's public APIs) and a verify script.
+- `deploy/`, `.github/`: Cloud Run manifests, one-time GCP setup, and CI/CD. See `deploy/README.md`.
 - `web/`: Next.js frontend. It proxies `/api/*` to the backend.
 
 ## Quickstart (Docker)
@@ -24,7 +31,7 @@ docker compose up --build     # Postgres + API on http://localhost:8000
 cd web && npm install && npm run dev   # http://localhost:3000
 ```
 
-Generate tomorrow's prompts into the local database: `docker compose run --rm api python -m rarest_blue.generate`.
+Generate tomorrow's prompts into the local database: `docker compose run --rm api python -m rarest_blue.entrypoints.cli.generate`.
 Add `--dry-run` to print the set without storing it. `docker compose down -v` wipes the database.
 
 ## Run it without Docker
@@ -35,7 +42,7 @@ Add `--dry-run` to print the set without storing it. `docker compose down -v` wi
 # backend (terminal 1)
 cd src
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-.venv/bin/uvicorn rarest_blue.api:app --reload --port 8000
+.venv/bin/uvicorn --factory rarest_blue.entrypoints.http.app:create_app --reload --port 8000
 
 # frontend (terminal 2)
 cd web
@@ -43,22 +50,22 @@ npm install
 npm run dev        # http://localhost:3000
 ```
 
-Tests: `cd src && .venv/bin/pip install -r requirements-dev.txt && .venv/bin/pytest`.
+Tests: `cd src && .venv/bin/pip install -r requirements-dev.txt && .venv/bin/pytest && .venv/bin/ruff check .`.
 The API and generator tests need a scratch Postgres: set `TEST_DATABASE_URL` (its tables get truncated). Without it they're skipped.
 Don't point it at your dev database. With compose, run `docker compose exec db createdb -U postgres rarest_test` once and use
 `TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/rarest_test`.
 
 ## Daily prompts
 
-Each night at 23:30 Toronto time, `python -m rarest_blue.generate` asks an LLM on OpenRouter for tomorrow's 7 prompts.
+Each night at 23:30 Toronto time, `python -m rarest_blue.entrypoints.cli.generate` asks an LLM on OpenRouter for tomorrow's 7 prompts.
 It checks them (enough answers, no colliding aliases, a real deep-cut golden answer, decoys that don't accidentally
 match a real answer), retries up to 3 times (cycling through `OPENROUTER_MODELS`), and
 stores the set in the `daily_prompts` table. At midnight the API serves the new day's row. Nothing gets redeployed.
 
 If a day has no stored set when its first request arrives, the API stores and serves a set from the built-in bank in
-`prompts.py`. The day's set never changes once it's been served, except through the review tool below.
+`domain/prompt_bank.py`. The day's set never changes once it's been served, except through the review tool below.
 
-Try it without storing anything: `OPENROUTER_API_KEY=... .venv/bin/python -m rarest_blue.generate --dry-run`.
+Try it without storing anything: `OPENROUTER_API_KEY=... .venv/bin/python -m rarest_blue.entrypoints.cli.generate --dry-run`.
 Use `--day YYYY-MM-DD` to generate a specific day.
 
 Each prompt in `/api/daily` has a `suggestions` list for the answer box's autocomplete. It holds every right answer
@@ -70,9 +77,9 @@ away. The built-in fallback prompts have hand-written decoys.
 A real answer missing from the list scores zero, so check what players typed that got rejected:
 
 ```bash
-docker compose run --rm api python -m rarest_blue.review                      # today's top rejected guesses
-docker compose run --rm api python -m rarest_blue.review accept subway "Dupont"                # add a new answer
-docker compose run --rm api python -m rarest_blue.review accept subway "Spadina Stn" --as Spadina  # add an alias
+docker compose run --rm api python -m rarest_blue.entrypoints.cli.review                      # today's top rejected guesses
+docker compose run --rm api python -m rarest_blue.entrypoints.cli.review accept subway "Dupont"                # add a new answer
+docker compose run --rm api python -m rarest_blue.entrypoints.cli.review accept subway "Spadina Stn" --as Spadina  # add an alias
 ```
 
 Accepting updates the day's stored set and rescores every guess it now matches, leaderboard totals included.
@@ -80,9 +87,10 @@ Pass `--day YYYY-MM-DD` before the subcommand for another day.
 
 ## Adding fallback prompts
 
-Edit `src/rarest_blue/prompts.py`. List the answers from most to least obvious, because list
+Edit `src/rarest_blue/domain/prompt_bank.py`. List the answers from most to least obvious, because list
 order seeds the starting popularity. Set `golden` to that prompt's hidden bonus answer. Put the canonical name first in each tuple and its aliases after it.
-`tests/test_game.py` catches aliases that collide.
+`tests/unit/test_matching.py` and `tests/unit/test_prompt_bank.py` catch colliding aliases, scoring decoys and
+obvious golden answers.
 
 ## Config
 
@@ -95,28 +103,7 @@ order seeds the starting popularity. Set `golden` to that prompt's hidden bonus 
 
 ## Deploy (Cloud Run + Supabase)
 
-The `src/Dockerfile` image runs both the API service and the generator job.
-
-```bash
-PROJECT=your-gcp-project REGION=us-east1
-IMAGE=$REGION-docker.pkg.dev/$PROJECT/rarest-blue/backend
-
-# one-time setup
-gcloud artifacts repositories create rarest-blue --repository-format docker --location $REGION
-printf '%s' 'postgresql://...pooler.supabase.com:6543/postgres' | gcloud secrets create database-url --data-file=-
-printf '%s' 'your-openrouter-key' | gcloud secrets create openrouter-api-key --data-file=-
-
-# build, then deploy the API
-gcloud builds submit src --tag $IMAGE
-gcloud run deploy rarest-blue-api --image $IMAGE --region $REGION --allow-unauthenticated \
-  --set-secrets DATABASE_URL=database-url:latest --set-env-vars CORS_ORIGINS=https://your-frontend.example
-
-# the nightly job
-gcloud run jobs create rarest-blue-generate --image $IMAGE --region $REGION \
-  --command python --args=-m,rarest_blue.generate --max-retries 1 --task-timeout 25m \
-  --set-secrets DATABASE_URL=database-url:latest,OPENROUTER_API_KEY=openrouter-api-key:latest
-```
-
-Schedule the job from the Cloud Run console: open **rarest-blue-generate**, go to **Triggers**, add a scheduler
-trigger with cron `30 23 * * *` and time zone `America/Toronto`. After a code change, rebuild the image and run
-`gcloud run deploy` and `gcloud run jobs update rarest-blue-generate --image $IMAGE --region $REGION`.
+The `src/Dockerfile` image runs both the API (a Cloud Run service) and the nightly generator (a Cloud Run job that
+Cloud Scheduler triggers at 23:30 Toronto time). Run `deploy/setup.sh` once per GCP project. After that, every merge
+to `main` that touches the backend is tested, built, deployed and smoke-tested by GitHub Actions, with no stored keys.
+See `deploy/README.md` for the setup and the security model, and `supabase/README.md` for the database.

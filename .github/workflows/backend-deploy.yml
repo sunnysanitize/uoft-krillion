@@ -1,0 +1,122 @@
+name: Backend deploy
+
+# Ships the backend to Cloud Run on every merge to main that touches it. CI must pass first.
+# GCP access is keyless: GitHub's OIDC token is exchanged through Workload Identity Federation, and the
+# provider only accepts tokens from this workflow file, on main, in the `production` environment, of this
+# repo (deploy/setup.sh). PRs, forks, other branches and other workflows can't get a token.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "supabase/**"
+      - "deploy/**"
+      - ".github/workflows/backend-*.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deploy at a time, never cancelled halfway.
+concurrency:
+  group: backend-deploy
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    uses: ./.github/workflows/backend-ci.yml
+
+  deploy:
+    needs: ci
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    # Required reviewers on this environment give a manual approval gate; the WIF condition makes it unskippable.
+    environment:
+      name: production
+      url: ${{ steps.url.outputs.url }}
+    permissions:
+      contents: read
+      id-token: write
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 2s --health-retries 15
+    env:
+      PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      REGION: ${{ vars.GCP_REGION }}
+      CORS_ORIGINS: ${{ vars.CORS_ORIGINS }}
+      REPO_PATH: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/rarest-blue/api
+    steps:
+      - name: Check config
+        run: |
+          for v in PROJECT_ID REGION CORS_ORIGINS; do
+            [ -n "${!v}" ] || { echo "::error::repo variable for $v is not set (see deploy/README.md)"; exit 1; }
+          done
+          # Values are substituted into YAML, so only accept plain tokens: no quotes, spaces or newlines.
+          [[ "$PROJECT_ID" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]$ ]] || { echo "::error::bad GCP_PROJECT_ID"; exit 1; }
+          [[ "$REGION" =~ ^[a-z]+-[a-z]+[0-9]$ ]] || { echo "::error::bad GCP_REGION"; exit 1; }
+          [[ "$CORS_ORIGINS" =~ ^https://[A-Za-z0-9.:-]+(,https://[A-Za-z0-9.:-]+)*$ ]] \
+            || { echo "::error::CORS_ORIGINS must be comma-separated https:// origins"; exit 1; }
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Build and test before touching GCP, then ship these exact bytes.
+      - name: Build
+        run: |
+          docker build -t "$REPO_PATH:$GITHUB_SHA" \
+            --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" src
+      - name: Smoke test the image being shipped
+        run: deploy/smoke-image.sh "$REPO_PATH:$GITHUB_SHA" postgresql://postgres:postgres@localhost:5432/postgres
+
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SA }}
+          token_format: access_token
+
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+
+      - name: Push
+        id: image
+        run: |
+          gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
+          docker push "$REPO_PATH:$GITHUB_SHA"
+          # Deploy by digest, so the revision runs exactly the image tested above.
+          echo "ref=$(docker inspect --format '{{index .RepoDigests 0}}' "$REPO_PATH:$GITHUB_SHA")" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy API service
+        env:
+          IMAGE: ${{ steps.image.outputs.ref }}
+        run: |
+          envsubst '${PROJECT_ID} ${IMAGE} ${CORS_ORIGINS}' < deploy/cloudrun/service.yaml > "$RUNNER_TEMP/service.yaml"
+          gcloud run services replace "$RUNNER_TEMP/service.yaml" --project "$PROJECT_ID" --region "$REGION" --quiet
+
+      - name: Deploy generator job
+        env:
+          IMAGE: ${{ steps.image.outputs.ref }}
+        run: |
+          envsubst '${PROJECT_ID} ${IMAGE} ${CORS_ORIGINS}' < deploy/cloudrun/generator-job.yaml > "$RUNNER_TEMP/job.yaml"
+          gcloud run jobs replace "$RUNNER_TEMP/job.yaml" --project "$PROJECT_ID" --region "$REGION" --quiet
+
+      - name: Smoke test production
+        id: url
+        run: |
+          url=$(gcloud run services describe rarest-blue-api --project "$PROJECT_ID" --region "$REGION" --format 'value(status.url)')
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          for _ in 1 2 3 4 5; do
+            body=$(curl -sf --max-time 20 "$url/api/daily") || { sleep 5; continue; }
+            if python3 -c 'import json,sys; assert len(json.loads(sys.argv[1])["prompts"]) == 7' "$body"; then
+              echo "live: $url"; exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::$url/api/daily is not serving. Roll back: gcloud run services update-traffic rarest-blue-api --region $REGION --to-revisions <previous>=100"
+          exit 1

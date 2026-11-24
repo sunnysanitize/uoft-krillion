@@ -38,11 +38,13 @@ def share_of(answer: str | None, counts: dict[str, int]) -> float:
 def rarity_label(share: float, golden: bool = False) -> str:
     if golden:
         return GOLDEN
-    if share < 0.05:
+    # Reserve high tiers for scarce answers. With the old 5/15/35%
+    # cutoffs, even an obvious answer in a large category earned a rarity bonus.
+    if share < 0.01:
         return "Deep Cut"
-    if share < 0.15:
+    if share < 0.03:
         return "Rare"
-    if share < 0.35:
+    if share < 0.10:
         return "Uncommon"
     return "Common"
 

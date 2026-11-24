@@ -1,4 +1,5 @@
 from rarest_blue.domain.matching import match_answer, normalize, recognize
+from rarest_blue.domain.models import Prompt
 from rarest_blue.domain.prompt_bank import PROMPTS, PROMPTS_BY_ID
 
 
@@ -12,20 +13,33 @@ def test_aliases_and_typos_match():
 
 
 def test_short_codes_do_not_fuzz():
-    courses = PROMPTS_BY_ID["first_year_pain"]
+    courses = Prompt("codes", "Course codes", "", "MAT157", [("MAT137",), ("MAT157",)])
     assert match_answer(courses, "mat137") == "MAT137"
     assert match_answer(courses, "MAT") is None
 
 
 def test_short_forms_and_extra_words_match():
-    buildings = PROMPTS_BY_ID["buildings"]
+    buildings = Prompt(
+        "places",
+        "Places",
+        "",
+        "Innis College Library",
+        [
+            ("Lash Miller Chemical Laboratories",),
+            ("Koffler Student Services Centre",),
+            ("Spadina",),
+            ("Innis College Library", "innis"),
+            ("University College",),
+            ("University Library",),
+        ],
+    )
     assert match_answer(buildings, "Lash Miller Chemical") == "Lash Miller Chemical Laboratories"
     assert match_answer(buildings, "Koffler Student") == "Koffler Student Services Centre"
-    assert match_answer(PROMPTS_BY_ID["subway"], "Spadina Station") == "Spadina"
-    assert match_answer(PROMPTS_BY_ID["libraries"], "Innis Library") == "Innis College Library"
+    assert match_answer(buildings, "Spadina Station") == "Spadina"
+    assert match_answer(buildings, "Innis Library") == "Innis College Library"
     # Ambiguous or generic leading words don't count.
-    assert match_answer(PROMPTS_BY_ID["ontario_unis"], "University") is None
-    assert match_answer(PROMPTS_BY_ID["faculties"], "Faculty") is None
+    assert match_answer(buildings, "University") is None
+    assert match_answer(buildings, "Faculty") is None
 
 
 def test_no_alias_collisions_within_a_prompt():

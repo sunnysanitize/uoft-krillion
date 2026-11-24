@@ -153,7 +153,8 @@ Only flag what you're confident about. Leave the lists empty when everything che
 
 
 def _examples() -> str:
-    picks = [(PROMPTS_BY_ID["colleges"], "places"), (PROMPTS_BY_ID["alumni"], "people")]
+    # Examples must meet the same answer-count contract as generated candidates.
+    picks = [(PROMPTS_BY_ID["utm_departments"], "academics"), (PROMPTS_BY_ID["hart_house_clubs"], "sports_clubs")]
     examples = []
     for prompt, category in picks:
         example = {**prompt.to_dict(), "category": category}

@@ -1,3 +1,4 @@
+import json
 from datetime import date, timedelta
 
 import pytest
@@ -6,6 +7,12 @@ from rarest_blue.application import generation
 from rarest_blue.domain import rules
 from rarest_blue.domain.models import Prompt
 from tests.factories import FakeWriter, all_clear, gen_prompt, gen_set, verdict
+
+
+def test_generator_examples_satisfy_candidate_validation():
+    for example in json.loads(generation._examples())["prompts"]:
+        prompt = generation.clean_prompt(generation.GenPrompt.model_validate(example))
+        assert len(prompt.answers) >= generation.MIN_ANSWERS
 
 
 def test_clean_prompt_drops_colliding_aliases():

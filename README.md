@@ -5,6 +5,8 @@ Any valid answer counts, and **the fewer people who gave your answer, the deeper
 Each point is 10 m, and the depth zones go from Philosopher's Walk Shallows down to The Steam Tunnels.
 Answers score by rarity: Common 10, Uncommon 30, Rare 60, Deep Cut 85. Every prompt also hides one
 **One in a Krillion** answer worth 100.
+Common answers have at least a 10% share; Uncommon is 3–10%, Rare is 1–3%, and Deep Cut is below 1%.
+Shares combine seeded popularity with real guesses, so large answer lists do not automatically earn high tiers.
 See how deep you went against everyone else on the daily standings.
 
 Fan-made. Not affiliated with the University of Toronto.
@@ -95,8 +97,8 @@ A real answer missing from the list scores zero, so check what players typed tha
 
 ```bash
 docker compose run --rm api python -m rarest_blue.entrypoints.cli.review                      # today's top rejected guesses
-docker compose run --rm api python -m rarest_blue.entrypoints.cli.review accept subway "Dupont"                # add a new answer
-docker compose run --rm api python -m rarest_blue.entrypoints.cli.review accept subway "Spadina Stn" --as Spadina  # add an alias
+docker compose run --rm api python -m rarest_blue.entrypoints.cli.review accept custom_prompt "Missing answer"  # add a new answer
+docker compose run --rm api python -m rarest_blue.entrypoints.cli.review accept theology_colleges "Knox Coll" --as "Knox College"  # add an alias
 ```
 
 Accepting updates the day's stored set and rescores every guess it now matches, leaderboard totals included.
@@ -108,6 +110,10 @@ Edit `src/rarest_blue/domain/prompt_bank.py`. List the answers from most to leas
 order seeds the starting popularity. Set `golden` to that prompt's hidden bonus answer. Put the canonical name first in each tuple and its aliases after it.
 `tests/unit/test_matching.py` and `tests/unit/test_prompt_bank.py` catch colliding aliases, scoring decoys and
 obvious golden answers.
+Every fallback category must have a clear boundary, a complete accepted set, and an official reference in
+`PROMPT_SOURCES`. Arts & Science membership colleges and Toronto School of Theology colleges are separate
+questions: Knox is accepted in the latter. Broad, incomplete lists and subjective categories are excluded.
+Deploying a bank change affects future fallback sets; already stored daily sets and awarded scores remain stored.
 
 ## Config
 

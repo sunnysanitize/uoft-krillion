@@ -92,6 +92,15 @@ def test_verdict_drops_wrong_answers_and_promotes_right_decoys():
     assert generation.clean_prompt(swapped).golden == gen.answers[-1].name
 
 
+def test_verdict_adds_missing_answers_without_duplicates():
+    gen = gen_prompt("x")
+    v = verdict("x", missing_answers=["Katsudon", "answer x 1", " "])
+    prompt = generation.clean_prompt(generation.apply_verdict(gen, v))
+    canon = [names[0] for names in prompt.answers]
+    assert canon[-1] == "Katsudon"
+    assert len(canon) == len(gen.answers) + 1
+
+
 def test_check_candidates_skips_rejected_and_unjudged_prompts():
     verdicts = generation.Verdicts(prompts=[verdict("topic0", ambiguous=True, problem="?"), verdict("topic1")])
     assert [p.id for _, p in generation.check_candidates(gen_set(), verdicts)] == ["topic1"]

@@ -1,0 +1,40 @@
+# Cloud Run job that has an LLM judge the day's rejected guesses and accept the real answers the list missed,
+# rescoring the players who typed them. Cloud Scheduler runs it every 15 minutes (see deploy/setup.sh). Same image
+# as the API, different command. Applied with `gcloud run jobs replace`.
+apiVersion: run.googleapis.com/v1
+kind: Job
+metadata:
+  name: rarest-blue-review
+  labels:
+    app: rarest-blue
+  annotations:
+    run.googleapis.com/launch-stage: GA
+spec:
+  template:
+    spec:
+      parallelism: 1
+      taskCount: 1
+      template:
+        spec:
+          serviceAccountName: rarest-blue-generator@${PROJECT_ID}.iam.gserviceaccount.com
+          # One LLM call per run; the next scheduled run picks up anything this one missed, so no retries.
+          maxRetries: 0
+          timeoutSeconds: 600
+          containers:
+            - image: ${IMAGE}
+              command: ["python", "-m", "rarest_blue.entrypoints.cli.review", "auto"]
+              resources:
+                limits:
+                  cpu: "1"
+                  memory: 512Mi
+              env:
+                - name: DATABASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: rarest-blue-database-url
+                      key: latest
+                - name: OPENROUTER_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: rarest-blue-openrouter-key
+                      key: latest

@@ -80,6 +80,7 @@ class Verdict(BaseModel):
     problem: str
     wrong_answers: list[str]
     right_decoys: list[str]
+    missing_answers: list[str]
 
 
 class Verdicts(BaseModel):
@@ -116,7 +117,12 @@ Write exactly {CANDIDATES} prompts. Rules:
   order seeds starting popularity. A fact checker removes doubtful answers and any prompt left
   under {MIN_ANSWERS} is thrown out, so only pick prompts with a large, closed set of answers.
 - Make the answer list complete. A real answer missing from it scores zero for the player who
-  typed it, which is the worst thing that can happen in this game.
+  typed it, which is the worst thing that can happen in this game. Think like a hungry, tired
+  student typing fast: include every cuisine, brand, variety and everyday word they might reach
+  for, not just the textbook ones (a food prompt needs katsu, ramen, sushi and bubble tea; a
+  drink prompt needs energy drinks if the hint or wording invites them).
+- The prompt text and hint set the scope players will answer. Don't word a prompt broadly
+  ("a drink to survive a 9am") and then only accept a narrow slice of it.
 - `name` is the canonical display name. `aliases` are other spellings, abbreviations and
   nicknames students would actually type: short forms ("Sid Smith"), codes, old names.
   Aliases must not overlap between answers.
@@ -126,9 +132,10 @@ Write exactly {CANDIDATES} prompts. Rules:
   the list: something real that almost nobody will think of.
 - `hint` is one short, playful line nudging players away from the obvious answers.
 - `id` is a short snake_case slug for the prompt.
-- `decoys` are about as many WRONG answers as there are right ones: real, plausible things that
-  don't fit the prompt (near-misses, other campuses, other cities). The game recognizes them as
-  wrong guesses, so none of them may be a valid answer.
+- `decoys` are about as many WRONG answers as there are right ones: real things that clearly
+  don't fit the prompt (other campuses, other cities, other categories). The game recognizes them
+  as wrong guesses, so none of them may be a valid answer. If a reasonable student could argue a
+  decoy counts, it isn't a decoy: make it an answer or leave it out.
 """
 
 
@@ -145,10 +152,15 @@ For each prompt, return:
 - `problem`: one line explaining why it's ambiguous, or "" if it isn't.
 - `wrong_answers`: from the `answers` list only, the `name` of every answer that isn't real,
   doesn't fit the prompt, or has an alias that points at something else. Copy names exactly.
-- `right_decoys`: from `decoys_meant_to_be_wrong`, every decoy that actually is a valid answer.
-  Copy them exactly. Decoys are supposed to be wrong, so never list one in `wrong_answers`.
+- `right_decoys`: from `decoys_meant_to_be_wrong`, every decoy that a reasonable UofT student
+  could argue is a valid answer, given the prompt text and its hint. Copy them exactly. When in
+  doubt, list it: rejecting a defensible answer is worse than accepting one. Decoys are supposed
+  to be wrong, so never list one in `wrong_answers`.
+- `missing_answers`: real, valid answers players are likely to type that the list doesn't have
+  under any name or alias. Aim for at least 10 per prompt when the set allows. Common everyday
+  answers first, then rarer ones. Don't repeat anything already listed.
 
-Only flag what you're confident about. Leave the lists empty when everything checks out.
+Flag wrong answers only when you're confident. Leave a list empty when there's nothing to add.
 """
 
 
@@ -285,6 +297,8 @@ def apply_verdict(gen: GenPrompt, verdict: Verdict) -> GenPrompt:
         log.info("%s: golden '%s' is wrong, using '%s'", gen.id, gen.golden, golden)
     # A real answer missing from the list scores zero, so a right "decoy" becomes a (rare) answer.
     answers += [GenAnswer(name=d, aliases=[], why="") for d in gen.decoys if normalize(d) in right]
+    # So do the ones the checker says the writer forgot. They go last, so they start out rare.
+    answers += [GenAnswer(name=m, aliases=[], why="") for m in verdict.missing_answers if m.strip()]
     decoys = [d for d in gen.decoys if normalize(d) not in right]
     return gen.model_copy(update={"answers": answers, "decoys": decoys, "golden": golden})
 

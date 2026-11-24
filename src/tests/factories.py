@@ -30,7 +30,15 @@ def gen_set() -> generation.GenSet:
 
 def verdict(pid: str, **kw) -> generation.Verdict:
     return generation.Verdict(
-        **{"id": pid, "ambiguous": False, "problem": "", "wrong_answers": [], "right_decoys": [], **kw}
+        **{
+            "id": pid,
+            "ambiguous": False,
+            "problem": "",
+            "wrong_answers": [],
+            "right_decoys": [],
+            "missing_answers": [],
+            **kw,
+        }
     )
 
 

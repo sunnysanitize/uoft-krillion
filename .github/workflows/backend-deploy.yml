@@ -106,18 +106,6 @@ jobs:
           envsubst '${PROJECT_ID} ${IMAGE} ${CORS_ORIGINS}' < deploy/cloudrun/generator-job.yaml > "$RUNNER_TEMP/job.yaml"
           gcloud run jobs replace "$RUNNER_TEMP/job.yaml" --project "$PROJECT_ID" --region "$REGION" --quiet
 
-      - name: Deploy review job
-        env:
-          IMAGE: ${{ steps.image.outputs.ref }}
-        run: |
-          # deploy/setup.sh creates the job; the deployer may only update it. Until setup has run, skip with a warning.
-          if ! gcloud run jobs describe rarest-blue-review --project "$PROJECT_ID" --region "$REGION" >/dev/null 2>&1; then
-            echo "::warning::rarest-blue-review doesn't exist yet. Rerun deploy/setup.sh to create it and its schedule."
-            exit 0
-          fi
-          envsubst '${PROJECT_ID} ${IMAGE} ${CORS_ORIGINS}' < deploy/cloudrun/review-job.yaml > "$RUNNER_TEMP/review-job.yaml"
-          gcloud run jobs replace "$RUNNER_TEMP/review-job.yaml" --project "$PROJECT_ID" --region "$REGION" --quiet
-
       - name: Smoke test production
         id: url
         run: |

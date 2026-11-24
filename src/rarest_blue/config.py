@@ -11,8 +11,6 @@ DEFAULT_CORS_ORIGINS = "http://localhost:3000"
 DEFAULT_GENERATOR_MODEL = "google/gemini-3.6-flash"
 # A different model family checks the generator's facts, so they don't share the same blind spots.
 DEFAULT_VERIFIER_MODEL = "openai/gpt-5.4-mini"
-# Rules on rejected guesses live. Smaller models rejected obvious answers ("coffee", "Red Bull"), so this one is bigger.
-DEFAULT_JUDGE_MODEL = "anthropic/claude-sonnet-5.5"
 
 
 def _csv(value: str) -> list[str]:
@@ -26,7 +24,6 @@ class Settings:
     openrouter_api_key: str = field(default="", repr=False)
     generator_model: str = DEFAULT_GENERATOR_MODEL
     verifier_model: str = DEFAULT_VERIFIER_MODEL
-    judge_model: str = DEFAULT_JUDGE_MODEL
     # Local testing only: exposes POST /api/dev/reset so a player can replay today. Never set in production.
     dev_reset: bool = False
 
@@ -46,6 +43,5 @@ class Settings:
             openrouter_api_key=env.get("OPENROUTER_API_KEY", ""),
             generator_model=env.get("GENERATOR_MODEL") or DEFAULT_GENERATOR_MODEL,
             verifier_model=env.get("VERIFIER_MODEL") or DEFAULT_VERIFIER_MODEL,
-            judge_model=env.get("JUDGE_MODEL") or DEFAULT_JUDGE_MODEL,
             dev_reset=env.get("DEV_RESET") == "1",
         )

@@ -12,7 +12,7 @@
 #   * four service accounts, each with only what it needs:
 #       rarest-blue-api        runtime of the API; reads the DATABASE_URL secret
 #       rarest-blue-generator  runtime of the nightly job; reads DATABASE_URL + the OpenRouter key
-#       rarest-blue-scheduler  Cloud Scheduler identity; may only run the generator and review jobs
+#       rarest-blue-scheduler  Cloud Scheduler identity; may only run the generator job
 #       rarest-blue-deployer   GitHub Actions identity; pushes images and deploys, nothing else
 #   * Secret Manager secrets (it prompts for their values; they never touch disk or argv)
 #   * Workload Identity Federation, so GitHub Actions gets short-lived tokens with no stored key,
@@ -29,8 +29,6 @@ AR_REPO=rarest-blue
 SERVICE=rarest-blue-api
 JOB=rarest-blue-generate
 SCHEDULE_NAME=rarest-blue-generate-nightly
-REVIEW_JOB=rarest-blue-review
-REVIEW_SCHEDULE_NAME=rarest-blue-review-every-15m
 POOL=github
 PROVIDER=github-actions
 PLACEHOLDER=us-docker.pkg.dev/cloudrun/container/hello
@@ -124,9 +122,6 @@ g run services describe "$SERVICE" --region "$REGION" >/dev/null 2>&1 ||
     --no-allow-unauthenticated
 g run jobs describe "$JOB" --region "$REGION" >/dev/null 2>&1 ||
   g run jobs create "$JOB" --region "$REGION" --image "$PLACEHOLDER" --service-account "$(sa generator)"
-# Same identity as the generator: it needs the same two secrets and nothing more.
-g run jobs describe "$REVIEW_JOB" --region "$REGION" >/dev/null 2>&1 ||
-  g run jobs create "$REVIEW_JOB" --region "$REGION" --image "$PLACEHOLDER" --service-account "$(sa generator)"
 
 # The Next.js server calls the API without credentials, so the service is public. The data stays safe because
 # the API only exposes the game endpoints; Supabase itself is locked down (supabase/README.md).
@@ -138,10 +133,6 @@ g run services add-iam-policy-binding "$SERVICE" --region "$REGION" --member "se
   --role roles/run.developer >/dev/null
 g run jobs add-iam-policy-binding "$JOB" --region "$REGION" --member "serviceAccount:$(sa deployer)" \
   --role roles/run.developer >/dev/null
-for member in "$(sa scheduler):roles/run.invoker" "$(sa deployer):roles/run.developer"; do
-  g run jobs add-iam-policy-binding "$REVIEW_JOB" --region "$REGION" --member "serviceAccount:${member%%:*}" \
-    --role "${member#*:}" >/dev/null
-done
 
 step "Nightly schedule (23:30 America/Toronto)"
 SCHEDULER_REGION=${SCHEDULER_REGION:-$REGION}
@@ -149,13 +140,6 @@ RUN_URI="https://run.googleapis.com/v2/projects/$PROJECT_ID/locations/$REGION/jo
 if g scheduler jobs describe "$SCHEDULE_NAME" --location "$SCHEDULER_REGION" >/dev/null 2>&1; then verb=update; else verb=create; fi
 g scheduler jobs "$verb" http "$SCHEDULE_NAME" --location "$SCHEDULER_REGION" \
   --schedule "30 23 * * *" --time-zone America/Toronto --uri "$RUN_URI" --http-method POST \
-  --oauth-service-account-email "$(sa scheduler)" --attempt-deadline 60s >/dev/null
-
-step "Review schedule (every 15 minutes): an LLM accepts real answers players typed that the list missed"
-REVIEW_URI="https://run.googleapis.com/v2/projects/$PROJECT_ID/locations/$REGION/jobs/$REVIEW_JOB:run"
-if g scheduler jobs describe "$REVIEW_SCHEDULE_NAME" --location "$SCHEDULER_REGION" >/dev/null 2>&1; then verb=update; else verb=create; fi
-g scheduler jobs "$verb" http "$REVIEW_SCHEDULE_NAME" --location "$SCHEDULER_REGION" \
-  --schedule "*/15 * * * *" --time-zone America/Toronto --uri "$REVIEW_URI" --http-method POST \
   --oauth-service-account-email "$(sa scheduler)" --attempt-deadline 60s >/dev/null
 
 cat <<EOF

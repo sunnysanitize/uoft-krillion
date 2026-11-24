@@ -1,4 +1,10 @@
-export type Prompt = { id: string; text: string; hint: string };
+export type Prompt = {
+  id: string;
+  text: string;
+  hint: string;
+  /** Every accepted answer plus decoys, alphabetized, for autocomplete. Validity can't be read from it. */
+  suggestions?: string[];
+};
 
 export type Daily = {
   day: string;

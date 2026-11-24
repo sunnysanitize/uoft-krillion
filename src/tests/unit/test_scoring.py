@@ -7,38 +7,56 @@ from rarest_blue.domain.models import Prompt
 from rarest_blue.domain.prompt_bank import PROMPTS_BY_ID
 
 
-def test_rarer_scores_higher():
-    assert [scoring.score(s) for s in (0.005, 0.02, 0.06, 0.2)] == [85, 60, 30, 10]
-    assert scoring.score(0.6, golden=True) == 100
+def _list(n: int) -> Prompt:
+    return Prompt("p", "Name one", "", f"Answer {n - 1}", [(f"Answer {i}",) for i in range(n)])
 
 
-def test_rarity_tiers():
-    labels = [scoring.rarity_label(s) for s in (0.005, 0.02, 0.06, 0.25, 0.6)]
-    assert labels == ["Deep Cut", "Rare", "Uncommon", "Common", "Common"]
-    assert scoring.rarity_label(0.6, golden=True) == "One in a Krillion"
+def _tiers(n: int) -> list[str]:
+    p = _list(n)
+    counts = scoring.answer_counts(p, {})
+    return [scoring.rarity_label(a, counts) for a in p.canonical_answers]
 
 
-@pytest.mark.parametrize(
-    ("share", "points"),
-    [(0.0099, 85), (0.01, 60), (0.0299, 60), (0.03, 30), (0.0999, 30), (0.10, 10)],
-)
-def test_rarity_boundaries(share, points):
-    assert scoring.score(share) == points
+def test_obvious_answers_start_common_and_tail_is_rare():
+    tiers = _tiers(30)
+    assert tiers[:4] == ["Common"] * 4  # the obvious ones are worth little
+    assert tiers[4:9] == ["Uncommon"] * 5  # knowing the 9th answer isn't "Rare"
+    assert tiers[-1] == "Deep Cut"
+    assert tiers == sorted(tiers, key=["Common", "Uncommon", "Rare", "Deep Cut"].index)
 
 
-def test_obvious_answers_in_large_categories_start_common():
-    prompt = Prompt("large", "Large category", "", "Answer 69", [(f"Answer {i}",) for i in range(70)])
-    counts = scoring.answer_counts(prompt, {})
-    assert scoring.points_for(prompt, "Answer 0", scoring.share_of("Answer 0", counts)) == 10
-    assert scoring.points_for(prompt, "Answer 1", scoring.share_of("Answer 1", counts)) == 10
-    # Knowing any valid answer is not enough to earn Rare or Deep Cut.
-    assert scoring.points_for(prompt, "Answer 3", scoring.share_of("Answer 3", counts)) == 30
+@pytest.mark.parametrize("n", [7, 20, 40, 70])
+def test_long_lists_are_not_more_generous(n):
+    tiers = _tiers(n)
+    rare_or_better = sum(t in ("Rare", "Deep Cut") for t in tiers) / n
+    assert tiers[0] == "Common" and tiers[1] == "Common"
+    assert rare_or_better <= 0.6  # most of any list is Common/Uncommon at the start of a day
+    assert tiers[-1] in ("Rare", "Deep Cut")
+
+
+def test_real_guesses_move_answers_between_tiers():
+    p = _list(20)
+    deep = "Answer 18"
+    assert scoring.rarity_label(deep, scoring.answer_counts(p, {})) == "Deep Cut"
+    # Once lots of players pick it, it's no longer rare.
+    assert scoring.rarity_label(deep, scoring.answer_counts(p, {deep: 200})) == "Common"
+
+
+def test_points_and_labels_agree():
+    p = _list(30)
+    counts = scoring.answer_counts(p, {})
+    for a in p.canonical_answers:
+        pts = scoring.points_for(p, a, counts)
+        assert scoring.label_for_points(pts, a == p.golden) == scoring.rarity_label(a, counts, a == p.golden)
+    assert scoring.points_for(p, p.golden, counts) == 100
+    assert scoring.label_for_points(100, True) == "One in a Krillion"
 
 
 def test_golden_and_invalid_points():
     colleges = PROMPTS_BY_ID["colleges"]
-    assert scoring.points_for(colleges, None, 1.0) == 0
-    assert scoring.points_for(colleges, colleges.golden, 0.5) == 100
+    counts = scoring.answer_counts(colleges, {})
+    assert scoring.points_for(colleges, None, counts) == 0
+    assert scoring.points_for(colleges, colleges.golden, counts) == 100
 
 
 def test_answer_counts_add_tallies_to_priors():

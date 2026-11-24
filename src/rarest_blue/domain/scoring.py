@@ -3,7 +3,7 @@
 import random
 
 from .models import Prompt
-from .rules import GOLDEN, GOLDEN_POINTS, TIER_POINTS
+from .rules import GOLDEN, GOLDEN_POINTS, TIER_CUTOFFS, TIER_POINTS
 
 TOP_ANSWERS_SHOWN = 6
 DEEP_CUTS_SHOWN = 3
@@ -22,31 +22,36 @@ def answer_counts(prompt: Prompt, tallies: dict[str, int]) -> dict[str, int]:
     return counts
 
 
-def score(share: float, golden: bool = False) -> int:
-    """Points for a valid answer, from the fraction of players who said the same thing."""
-    return GOLDEN_POINTS if golden else TIER_POINTS[rarity_label(share)]
+def popularity_above(answer: str, counts: dict[str, int]) -> float:
+    """Fraction of all picks that went to answers strictly more popular than this one (0 = the most popular)."""
+    total = sum(counts.values())
+    mine = counts.get(answer, 0)
+    return sum(n for n in counts.values() if n > mine) / total if total else 0.0
 
 
-def points_for(prompt: Prompt, answer: str | None, share: float) -> int:
-    return score(share, answer == prompt.golden) if answer is not None else 0
+def rarity_label(answer: str, counts: dict[str, int], golden: bool = False) -> str:
+    if golden:
+        return GOLDEN
+    above = popularity_above(answer, counts)
+    return next((label for cutoff, label in TIER_CUTOFFS if above < cutoff), "Deep Cut")
+
+
+def points_for(prompt: Prompt, answer: str | None, counts: dict[str, int]) -> int:
+    """Points for a guess, given how often each answer has been picked so far (priors included)."""
+    if answer is None:
+        return 0
+    return TIER_POINTS[rarity_label(answer, counts)] if answer != prompt.golden else GOLDEN_POINTS
+
+
+def label_for_points(points: int, golden: bool) -> str:
+    """The tier a stored score was awarded at."""
+    if golden:
+        return GOLDEN
+    return next((label for label, p in TIER_POINTS.items() if p == points), "Common")
 
 
 def share_of(answer: str | None, counts: dict[str, int]) -> float:
     return counts.get(answer, 0) / sum(counts.values()) if answer else 1.0
-
-
-def rarity_label(share: float, golden: bool = False) -> str:
-    if golden:
-        return GOLDEN
-    # Reserve high tiers for scarce answers. With the old 5/15/35%
-    # cutoffs, even an obvious answer in a large category earned a rarity bonus.
-    if share < 0.01:
-        return "Deep Cut"
-    if share < 0.03:
-        return "Rare"
-    if share < 0.10:
-        return "Uncommon"
-    return "Common"
 
 
 def reveal(counts: dict[str, int], players: int, rng: random.Random | None = None) -> dict:

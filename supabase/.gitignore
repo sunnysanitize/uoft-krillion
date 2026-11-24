@@ -6,3 +6,6 @@
 .env.keys
 .env.local
 .env.*.local
+
+# Pulled prompt sets hold every answer: never commit them
+prompts/

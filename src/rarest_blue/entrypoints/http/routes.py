@@ -44,9 +44,9 @@ def _preloaded_prompt(preview: PromptPreview) -> dict:
         answers.append(
             {
                 "names": list(names),
-                "points": scoring.points_for(p, names[0], share),
+                "points": scoring.points_for(p, names[0], preview.counts),
                 "share_pct": round(100 * share, 1),
-                "rarity": scoring.rarity_label(share, golden),
+                "rarity": scoring.rarity_label(names[0], preview.counts, golden),
                 "golden": golden,
             }
         )
@@ -102,7 +102,7 @@ def _guess_response(out: GuessOutcome) -> dict:
         "answer": g.answer,
         "points": g.points,
         "share_pct": round(100 * g.share, 1) if out.valid else None,
-        "rarity": scoring.rarity_label(g.share, out.golden) if out.valid else None,
+        "rarity": scoring.label_for_points(g.points, out.golden) if out.valid else None,
         "golden": out.golden,
         "golden_answer": out.prompt.golden,
         **out.reveal,

@@ -63,6 +63,25 @@ supabase/verify.sh                 # re-check the lockdown afterwards
 New schema changes go in a new file in `supabase/migrations/` (`supabase migration new <name>`). Don't edit an
 applied migration. Mirror the change in `SCHEMA` in `src/rarest_blue/infrastructure/postgres.py`.
 
+## Editing a day's questions
+
+At 23:30 Toronto time the nightly job stores the set for **two days out**, so every set sits in the database for
+about a day before it goes live at midnight. Review or replace it in that window:
+
+```bash
+supabase/prompts.sh list                # stored days, guess counts, and today's date
+supabase/prompts.sh pull 2026-11-25     # writes supabase/prompts/2026-11-25.json: edit it
+supabase/prompts.sh check 2026-11-25    # errors would break the day; warnings are just quality hints
+supabase/prompts.sh push 2026-11-25     # checks, backs up what's stored, then replaces it (asks to confirm)
+```
+
+In the file, each prompt has `text`, `hint`, `answers` (each one a list: canonical name first, then aliases),
+`golden` (copied exactly from an answer's first name) and `decoys` (wrong answers the game recognizes). If a day
+has no stored set, `pull` starts you from the fallback set the game would serve. Pushing a day that's already live
+is refused, because players were scored against it. To undo a push, copy the backup from
+`supabase/prompts/backups/` over the day's file and push again. `supabase/prompts/` is gitignored because the
+files hold every answer.
+
 ## Keeping it safe
 
 - `DATABASE_URL` is the master key. Keep it in `.env` (gitignored) and the host's secret store, never in `web/` or in

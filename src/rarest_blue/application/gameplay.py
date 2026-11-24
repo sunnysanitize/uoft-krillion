@@ -10,7 +10,7 @@ from ..domain import days, rules, scoring
 from ..domain.matching import match_answer, recognize
 from ..domain.models import Prompt, ScoredGuess
 from ..domain.prompt_bank import PROMPTS
-from .ports import Clock, UnitOfWork, UnitOfWorkFactory
+from .ports import Clock, PromptStats, UnitOfWork, UnitOfWorkFactory
 
 
 class UnknownPrompt(LookupError):
@@ -84,14 +84,13 @@ class GameService:
         """Load matching data and a rarity snapshot once, before play begins."""
         day = self._clock()
         with self._uow() as uow:
-            return day, [
-                PromptPreview(
-                    prompt,
-                    scoring.answer_counts(prompt, uow.guesses.tallies(day, prompt.id)),
-                    uow.guesses.player_count(day, prompt.id),
-                )
-                for prompt in prompts_for(uow, day)
-            ]
+            prompts = prompts_for(uow, day)
+            stats = uow.guesses.stats(day)  # every prompt's counts in one query
+        empty = PromptStats()
+        return day, [
+            PromptPreview(p, scoring.answer_counts(p, stats.get(p.id, empty).tallies), stats.get(p.id, empty).players)
+            for p in prompts
+        ]
 
     def check(self, prompt_id: str, raw: str) -> CheckOutcome:
         """Before a guess counts: is it recognized, and is it right? Only right answers spend the prompt;
@@ -124,14 +123,23 @@ class GameService:
                     recognized, suggestion = recognize(prompt, raw)
                     if not recognized or answer is None:
                         return CheckOutcome(recognized=recognized, correct=False, suggestion=suggestion)
-                before = scoring.answer_counts(prompt, uow.guesses.tallies(day, prompt_id))
+                stats = uow.guesses.stats(day, prompt_id).get(prompt_id, PromptStats())
+                before = scoring.answer_counts(prompt, stats.tallies)
                 share = scoring.share_of(answer, before)
                 scored = ScoredGuess(answer=answer, points=scoring.points_for(prompt, answer, before), share=share)
-                uow.guesses.add(day, prompt_id, player_id, raw, scored)
+                if uow.guesses.add(day, prompt_id, player_id, raw, scored):
+                    # Our row is the only change since the counts above, so update them here, not with a re-query.
+                    tallies = dict(stats.tallies)
+                    if answer is not None:
+                        tallies[answer] = tallies.get(answer, 0) + 1
+                    after = PromptStats(tallies, stats.players + 1)
+                else:
+                    after = uow.guesses.stats(day, prompt_id).get(prompt_id, PromptStats())
+            else:
+                after = uow.guesses.stats(day, prompt_id).get(prompt_id, PromptStats())
 
-            players = uow.guesses.player_count(day, prompt_id)
-            counts = scoring.answer_counts(prompt, uow.guesses.tallies(day, prompt_id))
-            return GuessOutcome(prompt=prompt, guess=scored, reveal=scoring.reveal(counts, players, self._rng))
+            counts = scoring.answer_counts(prompt, after.tallies)
+            return GuessOutcome(prompt=prompt, guess=scored, reveal=scoring.reveal(counts, after.players, self._rng))
 
     def answers(self, player_id: str, prompt_id: str) -> list[dict]:
         """Every valid answer to a prompt with its share and points right now, rarest first.

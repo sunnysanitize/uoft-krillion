@@ -176,3 +176,23 @@ def test_api_docs_and_dev_reset_are_not_exposed(client):
     assert client.get("/docs").status_code == 404
     assert client.get("/openapi.json").status_code == 404
     assert client.post("/api/dev/reset", json={"player_id": "player-aaaa"}).status_code == 404
+
+
+def test_bulk_stats_match_per_prompt_counts(client, uow):
+    pids = [p["id"] for p in client.get("/api/daily").json()["prompts"]]
+    first = PROMPTS_BY_ID[pids[0]].answers[0][0]
+    _guess(client, "player-aaaa", pids[0], first)
+    _guess(client, "player-bbbb", pids[0], first)
+    _guess(client, "player-cccc", pids[1], "zzzz")  # a miss counts as a player but not an answer
+    today = days.today()
+    with uow() as tx:
+        day = tx.guesses.stats(today)
+        one = tx.guesses.stats(today, pids[0])
+    assert day[pids[0]].tallies == {first: 2} and day[pids[0]].players == 2
+    assert day[pids[1]].tallies == {} and day[pids[1]].players == 1
+    assert one == {pids[0]: day[pids[0]]}
+
+
+def test_pooled_connections_are_reused_across_requests(client):
+    for _ in range(25):  # more requests than the pool has connections
+        assert client.get("/api/leaderboard").status_code == 200

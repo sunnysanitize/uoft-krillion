@@ -20,15 +20,25 @@ def create_app(
     settings: Settings | None = None, uow: UnitOfWorkFactory | None = None, clock: Clock = days.today
 ) -> FastAPI:
     settings = settings or Settings.from_env()
-    uow = uow or (lambda: postgres.PostgresUnitOfWork(settings.database_url))
+    pools = []  # filled at startup; requests borrow warm connections instead of reconnecting
+
+    def pooled_uow():
+        return postgres.PostgresUnitOfWork(pool=pools[0])
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         postgres.init_schema(settings.database_url)
-        yield
+        if uow is None:
+            pools.append(postgres.open_pool(settings.database_url))
+        try:
+            yield
+        finally:
+            for pool in pools:
+                pool.close()
+            pools.clear()
 
     app = FastAPI(title="UofT Krillion", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
-    app.state.game = GameService(uow, clock)
+    app.state.game = GameService(uow or pooled_uow, clock)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,

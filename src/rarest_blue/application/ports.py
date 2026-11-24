@@ -6,6 +6,7 @@ Infrastructure implements them (Postgres, OpenRouter). Tests can swap in fakes. 
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from datetime import date
 from typing import Protocol
 
@@ -29,8 +30,12 @@ class PromptRepository(Protocol):
 class GuessRepository(Protocol):
     def find(self, day: date, prompt_id: str, player_id: str) -> ScoredGuess | None: ...
 
-    def add(self, day: date, prompt_id: str, player_id: str, raw: str, guess: ScoredGuess) -> None:
-        """Record a guess. A second guess by the same player on the same prompt is ignored."""
+    def add(self, day: date, prompt_id: str, player_id: str, raw: str, guess: ScoredGuess) -> bool:
+        """Record a guess. A second guess by the same player on the same prompt is ignored (returns False)."""
+        ...
+
+    def stats(self, day: date, prompt_id: str | None = None) -> dict[str, PromptStats]:
+        """Answer tallies and player counts per prompt, for one prompt or the whole day, in one round trip."""
         ...
 
     def tallies(self, day: date, prompt_id: str) -> dict[str, int]:
@@ -70,6 +75,12 @@ class FinishRepository(Protocol):
         ...
 
     def delete_player(self, day: date, player_id: str) -> None: ...
+
+
+@dataclass(frozen=True)
+class PromptStats:
+    tallies: dict[str, int] = field(default_factory=dict)  # valid answer -> how many players gave it
+    players: int = 0  # everyone who answered, right or wrong
 
 
 class UnitOfWork(Protocol):

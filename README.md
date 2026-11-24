@@ -124,3 +124,25 @@ The `src/Dockerfile` image runs both the API (a Cloud Run service) and the night
 Cloud Scheduler triggers at 23:30 Toronto time). Run `deploy/setup.sh` once per GCP project. After that, every merge
 to `main` that touches the backend is tested, built, deployed and smoke-tested by GitHub Actions, with no stored keys.
 See `deploy/README.md` for the setup and the security model, and `supabase/README.md` for the database.
+
+## Frontend deployments and collaborator PRs
+
+The `web/` frontend deploys through the Vercel GitHub integration. This repository is private, so Vercel checks
+whether the commit author has access to the Vercel team. A PR can pass backend CI and merge successfully while
+its Vercel deployment is blocked. A failed Vercel check does not mean Git lost the changes.
+
+For the current owner-only Vercel setup:
+
+1. Collaborators push their branches and open PRs using their own Git identities.
+2. The Vercel owner (`sunnysanitize`) reviews and merges PRs with **Create a merge commit** on GitHub. This puts
+   an owner-authored merge commit on `main`, while preserving the collaborator's original commits and credit.
+3. Check the Vercel status on the new `main` commit to confirm deployment. Collaborator preview deployments
+   can remain blocked until they have Vercel access.
+
+If a collaborator already merged a PR and deployment is blocked, the owner can push a follow-up commit to
+`main` or create a deployment from their authenticated Vercel account. Keep the merged history and everyone's
+Git identity intact.
+
+To let collaborators deploy their own commits from this private repository, use a Vercel Pro team and add them
+with the appropriate project access. On Hobby, private-repository commits must be authored by the team owner.
+See [Vercel's collaboration requirements](https://vercel.com/docs/deployments/troubleshoot-project-collaboration).

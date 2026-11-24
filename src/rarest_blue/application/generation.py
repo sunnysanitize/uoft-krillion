@@ -1,8 +1,9 @@
 """Use case: have an LLM write tomorrow's prompt set, fact-check it with a second LLM, check it hard, and store it.
 
-The generator over-writes candidates. The verifier, from a different model family, drops ambiguous prompts and wrong
-answers. Then the code checks what's left: enough answers, no colliding aliases, a real deep-cut golden answer,
-decoys that don't accidentally match a real answer, and nothing that reruns a recent prompt.
+The generator over-writes candidates. The verifier, from a different model family, judges every answer and every decoy
+one by one, and adds answers the writer missed. Then the code checks what's left: enough answers for how open the
+prompt is, no colliding aliases, a real deep-cut golden answer, decoys that don't overlap a real answer, and nothing
+that reruns a recent prompt.
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 from ..domain import rules
-from ..domain.matching import match_answer, normalize
+from ..domain.matching import MIN_PREFIX_CHARS, match_answer, normalize
 from ..domain.models import Prompt
 from ..domain.prompt_bank import PROMPTS_BY_ID
 from .ports import PromptWriter, UnitOfWorkFactory
@@ -32,6 +33,14 @@ CANDIDATES = 12
 MIN_ANSWERS = 15
 # What the generator is asked for: enough headroom that the verifier can cut a few and stay above MIN_ANSWERS.
 TARGET_ANSWERS = 20
+# Open prompts ("a food from a food truck") have no fixed list, so players type far more than any list holds.
+OPEN_MIN_ANSWERS = 30
+OPEN_TARGET_ANSWERS = 45
+# The verifier's additions go into the game unchecked. On a closed, factual set that's where wrong answers came from
+# ("presidents" who led other universities), so it may only fill a gap or two there.
+MAX_CLOSED_ADDITIONS = 2
+# A verdict that skips this much of the answer list didn't really check it.
+MIN_JUDGED_SHARE = 0.8
 GOLDEN_MIN_INDEX = 3
 # The golden answer must sit in the last part of the list, past this fraction of it.
 GOLDEN_MIN_FRACTION = 2 / 3
@@ -52,6 +61,8 @@ GENERATOR_TEMPERATURE = 1.0
 VERIFIER_TEMPERATURE = 0.0
 
 Category = Literal["places", "people", "academics", "student_life", "sports_clubs", "toronto", "history_traditions"]
+# closed: a fixed, checkable set (colleges, presidents). open: everyday things with no list (foods, drinks, apps).
+Kind = Literal["closed", "open"]
 
 
 class GenAnswer(BaseModel):
@@ -63,6 +74,9 @@ class GenAnswer(BaseModel):
 class GenPrompt(BaseModel):
     id: str
     category: Category
+    kind: Kind
+    # How many members the full set has, per the writer; 0 for open prompts.
+    set_size: int
     text: str
     hint: str
     golden: str
@@ -74,13 +88,26 @@ class GenSet(BaseModel):
     prompts: list[GenPrompt]
 
 
+class AnswerCheck(BaseModel):
+    name: str
+    valid: bool
+    more_aliases: list[str]
+
+
+class DecoyCheck(BaseModel):
+    decoy: str
+    defensible: bool
+
+
 class Verdict(BaseModel):
+    # One check per answer and per decoy, so the verifier can't wave a list through by leaving it out.
     id: str
+    kind: Kind
+    answers: list[AnswerCheck]
+    decoys: list[DecoyCheck]
+    missing_answers: list[GenAnswer]
     ambiguous: bool
     problem: str
-    wrong_answers: list[str]
-    right_decoys: list[str]
-    missing_answers: list[str]
 
 
 class Verdicts(BaseModel):
@@ -111,20 +138,31 @@ Write exactly {CANDIDATES} prompts. Rules:
   ("Name a Canadian university", "Name a sport"). The prompt text must name UofT or a UofT place.
 - Tag each prompt with a `category`; at most {MAX_PER_CATEGORY} prompts may share one.
   Buildings, residences and streets are all "places".
-- Only use prompts with a closed, verifiable set of answers. Every answer must be real; never
-  invent one. Prefer fewer answers over doubtful ones.
-- Each prompt needs at least {TARGET_ANSWERS} answers, listed from most to least obvious. List
-  order seeds starting popularity. A fact checker removes doubtful answers and any prompt left
-  under {MIN_ANSWERS} is thrown out, so only pick prompts with a large, closed set of answers.
-- Make the answer list complete. A real answer missing from it scores zero for the player who
-  typed it, which is the worst thing that can happen in this game. Think like a hungry, tired
-  student typing fast: include every cuisine, brand, variety and everyday word they might reach
-  for, not just the textbook ones (a food prompt needs katsu, ramen, sushi and bubble tea; a
-  drink prompt needs energy drinks if the hint or wording invites them).
-- The prompt text and hint set the scope players will answer. Don't word a prompt broadly
-  ("a drink to survive a 9am") and then only accept a narrow slice of it.
+- Tag each prompt with a `kind`:
+  - "closed": any prompt about specific facts: people, places, organizations, courses, events
+    (colleges, presidents, UTM buildings, Arts & Science departments, famous alumni). Prefer
+    these. List every member, not a sample, and set `set_size` to how many members the full set
+    has. Every qualifier in the prompt binds
+    every answer: a UTM prompt takes only UTM buildings, an Arts & Science prompt only its own
+    departments (not separate faculties or schools), a president prompt only people who held
+    that office at UofT.
+  - "open": everyday things where anything of that type counts (foods, drinks, apps, chains).
+    Set `set_size` to 0. These need at least {OPEN_TARGET_ANSWERS} answers, because players type
+    whatever comes to mind: the plain everyday word ("coffee", "pizza"), every sub-type, cuisine
+    and dish (a food prompt needs katsu, ramen, sushi and skewers as well as fries), every brand
+    and the boring obvious ones. If you can't list {OPEN_TARGET_ANSWERS}, pick another prompt.
+- Every answer must be real; never invent one. A closed prompt needs at least {TARGET_ANSWERS}
+  answers, listed from most to least obvious. List order seeds starting popularity. A fact
+  checker removes doubtful answers and any closed prompt left under {MIN_ANSWERS} (open: under
+  {OPEN_MIN_ANSWERS}) is thrown out.
+- A real answer missing from the list scores zero for the player who typed it, which is the
+  worst thing that can happen in this game.
+- The prompt text and hint set the scope players will answer. Word them exactly as narrowly as
+  the list. Don't word a prompt broadly ("a drink to survive a 9am") and then only accept a
+  narrow slice of it, and never let the hint invite answers the list doesn't have.
 - `name` is the canonical display name. `aliases` are other spellings, abbreviations and
-  nicknames students would actually type: short forms ("Sid Smith"), codes, old names.
+  nicknames students would actually type: short forms ("Sid Smith"), codes, old names, and the
+  variants with an everyday modifier ("double espresso", "iced latte", "chicken katsu").
   Aliases must not overlap between answers.
 - `why` is one short factual line saying why the answer is valid ("Opened in 1973 on St. George
   St."). A fact checker reads it, so make it specific and true.
@@ -134,33 +172,50 @@ Write exactly {CANDIDATES} prompts. Rules:
 - `id` is a short snake_case slug for the prompt.
 - `decoys` are about as many WRONG answers as there are right ones: real things that clearly
   don't fit the prompt (other campuses, other cities, other categories). The game recognizes them
-  as wrong guesses, so none of them may be a valid answer. If a reasonable student could argue a
-  decoy counts, it isn't a decoy: make it an answer or leave it out.
+  as wrong guesses, so none of them may be a valid answer. Check each one: if the prompt asks for
+  namesakes and a building bears that name, or a reasonable student could argue it fits the
+  wording or hint (an energy drink for "a drink to survive a 9am"), it isn't a decoy: make it an
+  answer or leave it out.
 """
 
 
-VERIFY_INSTRUCTIONS = """\
+VERIFY_INSTRUCTIONS = f"""\
 You are the fact checker for UofT Krillion, a trivia game for University of Toronto students.
 Players answer each prompt below by typing any valid answer. A wrong answer in the list lets
-players score with something false; a right answer listed as a decoy scores zero for the player
-who typed it. Check every prompt independently and judge it on facts, not on the `why` lines.
+players score with something false; a real answer missing from it, or listed as a decoy, scores
+zero for the player who typed it. Check every prompt independently and judge it on facts, not
+on the `why` lines.
 
 For each prompt, return:
 - `id`: copied from the prompt.
-- `ambiguous`: true if the prompt has no clear, closed set of answers, or reasonable UofT
-  students would disagree about what counts.
+- `kind`: "closed" if the answers are specific facts (people, places, organizations, courses:
+  colleges, presidents, buildings, departments, alumni), even with no official list; "open" if
+  they're everyday things where anything of that type counts (foods, drinks, apps, chains).
+- `answers`: one entry for every item in `answers`, in order, none skipped. `name` copied
+  exactly. `valid` is false if it isn't real, breaks any qualifier in the prompt (wrong campus,
+  a separate faculty for a department prompt, someone who held the office elsewhere or held a
+  different office), duplicates another answer, or has an alias that points at something else.
+  `more_aliases`: other ways students would type it that its aliases miss (short forms,
+  misspellings, modifier variants like "double shot espresso"), or [].
+- `decoys`: one entry for every item in `decoys_meant_to_be_wrong`, none skipped, `decoy`
+  copied exactly. `defensible` is true if it's a valid answer given the prompt text and its
+  hint. Closed prompts: true if it really belongs to the set (a real person a building is named
+  after, when the prompt asks for namesakes). Open prompts: true if a reasonable UofT student
+  could argue for it (an energy drink for a "survive a 9am" drink); when in doubt, true, since
+  rejecting a defensible answer is worse than accepting one.
+- `missing_answers`: real answers players are likely to type that aren't in the list under any
+  name or alias, each with `aliases` and a specific, true `why`. These go into the game without
+  another check.
+  - Open prompts: be generous. Go through every sub-type (for apps: social, school, food,
+    transit, banking) and add the everyday words and big brands first ("coffee", "ramen"), then
+    rarer ones. Add as many as it takes.
+  - Closed prompts: add only members you're certain of, at most {MAX_CLOSED_ADDITIONS}, usually
+    none. Never pad the list: an answer from another campus, faculty or university is worse than
+    leaving a gap, because players are shown deep cuts as facts to learn.
+- `ambiguous`: true if reasonable UofT students would disagree about what counts, or a closed
+  prompt's wording or hint invites answers its set can't hold. For an open prompt that's worded
+  more broadly than its list, add the missing answers instead.
 - `problem`: one line explaining why it's ambiguous, or "" if it isn't.
-- `wrong_answers`: from the `answers` list only, the `name` of every answer that isn't real,
-  doesn't fit the prompt, or has an alias that points at something else. Copy names exactly.
-- `right_decoys`: from `decoys_meant_to_be_wrong`, every decoy that a reasonable UofT student
-  could argue is a valid answer, given the prompt text and its hint. Copy them exactly. When in
-  doubt, list it: rejecting a defensible answer is worse than accepting one. Decoys are supposed
-  to be wrong, so never list one in `wrong_answers`.
-- `missing_answers`: real, valid answers players are likely to type that the list doesn't have
-  under any name or alias. Aim for at least 10 per prompt when the set allows. Common everyday
-  answers first, then rarer ones. Don't repeat anything already listed.
-
-Flag wrong answers only when you're confident. Leave a list empty when there's nothing to add.
 """
 
 
@@ -169,7 +224,7 @@ def _examples() -> str:
     picks = [(PROMPTS_BY_ID["utm_departments"], "academics"), (PROMPTS_BY_ID["hart_house_clubs"], "sports_clubs")]
     examples = []
     for prompt, category in picks:
-        example = {**prompt.to_dict(), "category": category}
+        example = {**prompt.to_dict(), "category": category, "kind": "closed", "set_size": len(prompt.answers)}
         example["answers"] = [{"name": names[0], "aliases": list(names[1:]), "why": "..."} for names in prompt.answers]
         examples.append(example)
     return json.dumps({"prompts": examples}, indent=1)
@@ -206,6 +261,8 @@ def build_verify_request(gen: GenSet) -> str:
         {
             "id": p.id,
             "text": p.text,
+            # The hint sets scope as much as the text does, so decoys are judged against both.
+            "hint": p.hint,
             "answers": [a.model_dump() for a in p.answers],
             "decoys_meant_to_be_wrong": p.decoys,
         }
@@ -255,8 +312,9 @@ def clean_prompt(gen: GenPrompt) -> Prompt:
                 taken.add(alias_key)
         answers.append(tuple(names))
 
-    if len(answers) < MIN_ANSWERS:
-        raise ValueError(f"{gen.id}: only {len(answers)} usable answers")
+    needed = OPEN_MIN_ANSWERS if gen.kind == "open" else MIN_ANSWERS
+    if len(answers) < needed:
+        raise ValueError(f"{gen.id}: only {len(answers)} usable answers for a {gen.kind} prompt")
 
     canon = [names[0] for names in answers]
     golden = next((n for n in canon if normalize(n) == normalize(gen.golden)), None)
@@ -270,37 +328,78 @@ def clean_prompt(gen: GenPrompt) -> Prompt:
         raise ValueError(f"{gen.id}: '{text}' doesn't name UofT or a UofT place")
 
     prompt = Prompt(id=_slug(gen.id) or _slug(text), text=text, hint=hint, golden=golden, answers=answers)
-    # A "decoy" that matches a real answer would score, so drop those.
+    # A "decoy" that matches a real answer would score, so drop those. So do ones sharing a whole name with an
+    # answer ("Milk" next to "steamed milk"): players can defend those, and a dropped decoy costs nothing.
     decoys: dict[str, str] = {}
     for decoy in gen.decoys:
         decoy, key = decoy.strip(), normalize(decoy)
-        if key and key not in taken and key not in decoys and match_answer(prompt, decoy) is None:
+        if not key or key in taken or key in decoys or match_answer(prompt, decoy) is not None:
+            continue
+        if not any(_contains(key, t) or _contains(t, key) for t in taken):
             decoys[key] = decoy
     return replace(prompt, decoys=list(decoys.values()))
 
 
-def apply_verdict(gen: GenPrompt, verdict: Verdict) -> GenPrompt:
-    """Drop the answers the verifier says are wrong and promote decoys it says are right.
+def _contains(outer: str, inner: str) -> bool:
+    """Is `inner` a distinctive run of whole words inside `outer`?"""
+    return len(inner) >= MIN_PREFIX_CHARS and f" {inner} " in f" {outer} "
 
-    A wrong golden answer hands the bonus to the deepest answer left. Raises ValueError if the prompt is ambiguous.
+
+def apply_verdict(gen: GenPrompt, verdict: Verdict) -> GenPrompt:
+    """Apply the verifier's per-item checks: drop wrong answers, promote defensible decoys, add what's missing.
+
+    A wrong golden answer hands the bonus to the deepest answer left. Raises ValueError if the prompt is ambiguous,
+    the verdict skipped too much of the list, or a closed list holds more answers than the set has.
     """
     if verdict.ambiguous:
         raise ValueError(f"{gen.id}: ambiguous ({verdict.problem})")
-    wrong = {normalize(n) for n in verdict.wrong_answers}
-    right = {normalize(d) for d in verdict.right_decoys}
-    answers = [a for a in gen.answers if normalize(a.name) not in wrong]
+    checks = {normalize(c.name): c for c in verdict.answers}
+    answers, judged, invalid = [], 0, set()
+    for ans in gen.answers:
+        keys = [normalize(n) for n in (ans.name, *ans.aliases)]
+        check = next((checks[k] for k in keys if k in checks), None)
+        if check is None:  # only the writer vouches for it, which is how every answer used to get in
+            answers.append(ans)
+            continue
+        judged += 1
+        if check.valid:
+            answers.append(ans.model_copy(update={"aliases": [*ans.aliases, *check.more_aliases]}))
+        else:
+            invalid.update(keys)
+    if judged < MIN_JUDGED_SHARE * len(gen.answers):
+        raise ValueError(f"{gen.id}: the verifier only judged {judged} of {len(gen.answers)} answers")
     if len(answers) < len(gen.answers):
         log.info("%s: verifier dropped %d answers", gen.id, len(gen.answers) - len(answers))
+    if gen.kind == verdict.kind == "closed" and 0 < gen.set_size < len(answers):
+        raise ValueError(f"{gen.id}: {len(answers)} answers for a set of {gen.set_size}, so some are padding")
+
+    # A real answer missing from the list scores zero, so a defensible "decoy" becomes an answer. Unjudged decoys go
+    # too: a missing decoy only means one fewer name in the autocomplete.
+    defensible = {normalize(c.decoy) for c in verdict.decoys if c.defensible}
+    wrong = {normalize(c.decoy) for c in verdict.decoys if not c.defensible}
+    promoted = [GenAnswer(name=d, aliases=[], why="") for d in gen.decoys if normalize(d) in defensible]
+    decoys = [d for d in gen.decoys if normalize(d) in wrong]
+    # Additions the verifier contradicts itself on (an answer it called wrong, a decoy it called wrong) stay out.
+    added = [
+        m
+        for m in verdict.missing_answers
+        if m.name.strip() and m.why.strip() and normalize(m.name) not in invalid | wrong
+    ]
+    if verdict.kind == "closed":
+        room = gen.set_size - len(answers) - len(promoted) if gen.set_size else MAX_CLOSED_ADDITIONS
+        added = added[: max(0, min(MAX_CLOSED_ADDITIONS, room))]
+
     golden = gen.golden
-    if normalize(golden) in wrong and answers:
+    if normalize(golden) in invalid and answers:
         golden = answers[-1].name
         log.info("%s: golden '%s' is wrong, using '%s'", gen.id, gen.golden, golden)
-    # A real answer missing from the list scores zero, so a right "decoy" becomes a (rare) answer.
-    answers += [GenAnswer(name=d, aliases=[], why="") for d in gen.decoys if normalize(d) in right]
-    # So do the ones the checker says the writer forgot. They go last, so they start out rare.
-    answers += [GenAnswer(name=m, aliases=[], why="") for m in verdict.missing_answers if m.strip()]
-    decoys = [d for d in gen.decoys if normalize(d) not in right]
-    return gen.model_copy(update={"answers": answers, "decoys": decoys, "golden": golden})
+    # New answers go just before the golden one: past the obvious ones, and never pushing the golden out of the
+    # deep end of the list (or replacing it with an unchecked addition).
+    at = next((i for i, a in enumerate(answers) if normalize(a.name) == normalize(golden)), len(answers))
+    answers[at:at] = [*promoted, *added]
+    # Either model calling it open means players will type more than any list holds, so it needs the broad list.
+    kind = "open" if "open" in (gen.kind, verdict.kind) else "closed"
+    return gen.model_copy(update={"answers": answers, "decoys": decoys, "golden": golden, "kind": kind})
 
 
 def check_candidates(gen: GenSet, verdicts: Verdicts) -> list[tuple[str, Prompt]]:

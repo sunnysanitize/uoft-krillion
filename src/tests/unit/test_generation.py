@@ -5,8 +5,9 @@ import pytest
 
 from rarest_blue.application import generation
 from rarest_blue.domain import rules
+from rarest_blue.domain.matching import match_answer
 from rarest_blue.domain.models import Prompt
-from tests.factories import FakeWriter, all_clear, gen_prompt, gen_set, verdict
+from tests.factories import FakeWriter, addition, all_clear, gen_prompt, gen_set, verdict
 
 
 def test_generator_examples_satisfy_candidate_validation():
@@ -75,35 +76,98 @@ def test_pick_set_skips_reruns_of_recent_prompts():
     assert picked[-1].id == "spare"
 
 
-def test_verdict_drops_wrong_answers_and_promotes_right_decoys():
+def canon_of(gen: generation.GenPrompt, v: generation.Verdict) -> list[str]:
+    return [names[0] for names in generation.clean_prompt(generation.apply_verdict(gen, v)).answers]
+
+
+def test_verdict_drops_wrong_answers_and_promotes_defensible_decoys():
     gen = gen_prompt("x")
     gen.decoys.append("Actually Right")
-    v = verdict("x", wrong_answers=["answer x 1"], right_decoys=["actually right"])
-    prompt = generation.clean_prompt(generation.apply_verdict(gen, v))
+    applied = generation.apply_verdict(gen, verdict(gen, invalid=("Answer x 1",), defensible=("Actually Right",)))
+    prompt = generation.clean_prompt(applied)
     canon = [names[0] for names in prompt.answers]
     assert "Answer x 1" not in canon
-    assert canon[-1] == "Actually Right"
+    # New answers sit just before the golden one, so it stays the deep cut.
+    assert canon[canon.index(prompt.golden) - 1] == "Actually Right"
+    assert prompt.golden == gen.golden
     assert prompt.decoys == ["Wrong x 0", "Wrong x 1", "Wrong x 2"]
     with pytest.raises(ValueError, match="ambiguous"):
-        generation.apply_verdict(gen, verdict("x", ambiguous=True, problem="open-ended"))
+        generation.apply_verdict(gen, verdict(gen, ambiguous=True, problem="open-ended"))
     # A wrong golden answer passes the bonus to the deepest real answer left.
-    swapped = generation.apply_verdict(gen, verdict("x", wrong_answers=[gen.golden]))
+    swapped = generation.apply_verdict(gen, verdict(gen, invalid=(gen.golden,)))
     assert swapped.golden == gen.answers[-1].name
     assert generation.clean_prompt(swapped).golden == gen.answers[-1].name
 
 
-def test_verdict_adds_missing_answers_without_duplicates():
+def test_verdict_must_judge_the_list_item_by_item():
     gen = gen_prompt("x")
-    v = verdict("x", missing_answers=["Katsudon", "answer x 1", " "])
+    v = verdict(gen)
+    skipped_one = v.model_copy(update={"answers": v.answers[1:], "decoys": v.decoys[1:]})
+    applied = generation.apply_verdict(gen, skipped_one)
+    # One unjudged answer keeps the writer's word; an unjudged decoy goes, since dropping one costs nothing.
+    assert len(applied.answers) == len(gen.answers)
+    assert applied.decoys == gen.decoys[1:]
+    # A verdict that only names the bad ones (the old free-list habit) didn't check the rest.
+    lazy = v.model_copy(update={"answers": [generation.AnswerCheck(name="Answer x 1", valid=False, more_aliases=[])]})
+    with pytest.raises(ValueError, match="only judged 1"):
+        generation.apply_verdict(gen, lazy)
+    # Checks are matched by alias too, and extra aliases from the checker count.
+    v.answers[0] = generation.AnswerCheck(name="alias x 0", valid=True, more_aliases=["double shot x"])
     prompt = generation.clean_prompt(generation.apply_verdict(gen, v))
-    canon = [names[0] for names in prompt.answers]
-    assert canon[-1] == "Katsudon"
-    assert len(canon) == len(gen.answers) + 1
+    assert match_answer(prompt, "double shot x") == "Answer x 0"
+
+
+def test_closed_prompts_take_only_a_few_checked_additions():
+    gen = gen_prompt("x")
+    missing = tuple(addition(f"New {i}") for i in range(5))
+    canon = canon_of(gen, verdict(gen, missing=missing))
+    assert canon[-4:-2] == ["New 0", "New 1"] and "New 2" not in canon
+    # No more than the set has room for, per the writer's own count.
+    gen.set_size = len(gen.answers) + 1
+    assert "New 1" not in canon_of(gen, verdict(gen, missing=missing))
+    # A closed list longer than its set is padded.
+    gen.set_size = len(gen.answers) - 1
+    with pytest.raises(ValueError, match="padding"):
+        generation.apply_verdict(gen, verdict(gen))
+    # Additions the checker contradicts, or can't say why they're real, stay out.
+    gen.set_size = 0
+    unexplained = generation.GenAnswer(name="No Reason", aliases=[], why=" ")
+    canon = canon_of(gen, verdict(gen, invalid=("Answer x 1",), missing=(addition("Wrong x 0"), unexplained)))
+    assert "Wrong x 0" not in canon and "No Reason" not in canon
+
+
+def test_open_prompts_need_a_broad_list_and_take_every_addition():
+    thin = gen_prompt("x", n=generation.OPEN_MIN_ANSWERS - 2, kind="open")
+    with pytest.raises(ValueError, match="open prompt"):
+        canon_of(thin, verdict(thin))
+    missing = (addition("Coffee"), addition("Katsu", ("chicken katsu", "katsudon")), addition("Ramen"))
+    canon = canon_of(thin, verdict(thin, missing=missing))
+    assert {"Coffee", "Katsu", "Ramen"} <= set(canon)
+    # The writer calling it closed doesn't dodge the broad-list bar if the checker says it's open.
+    closed = gen_prompt("x", n=generation.MIN_ANSWERS + 2)
+    with pytest.raises(ValueError, match="open prompt"):
+        canon_of(closed, verdict(closed, kind="open"))
+
+
+def test_clean_prompt_drops_decoys_sharing_a_name_with_an_answer():
+    gen = gen_prompt("x")
+    gen.answers[0].aliases.append("steamed milk")
+    gen.decoys += ["Milk", "Answer x 3 Supreme", "Tea"]
+    assert generation.clean_prompt(gen).decoys == ["Wrong x 0", "Wrong x 1", "Wrong x 2", "Tea"]
+
+
+def test_verify_request_shows_the_hint():
+    gen = gen_set()
+    gen.prompts[0].hint = "Energy drinks count too."
+    assert "Energy drinks count too." in generation.build_verify_request(gen)
 
 
 def test_check_candidates_skips_rejected_and_unjudged_prompts():
-    verdicts = generation.Verdicts(prompts=[verdict("topic0", ambiguous=True, problem="?"), verdict("topic1")])
-    assert [p.id for _, p in generation.check_candidates(gen_set(), verdicts)] == ["topic1"]
+    gen = gen_set()
+    verdicts = generation.Verdicts(
+        prompts=[verdict(gen.prompts[0], ambiguous=True, problem="?"), verdict(gen.prompts[1])]
+    )
+    assert [p.id for _, p in generation.check_candidates(gen, verdicts)] == ["topic1"]
 
 
 def test_daily_focus_varies_by_day():

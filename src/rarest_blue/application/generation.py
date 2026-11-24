@@ -167,7 +167,8 @@ Write exactly {CANDIDATES} prompts. Rules:
 - `why` is one short factual line saying why the answer is valid ("Opened in 1973 on St. George
   St."). A fact checker reads it, so make it specific and true.
 - `golden` is one hidden deep-cut answer copied exactly from a `name`, from the last third of
-  the list: something real that almost nobody will think of.
+  the list: something real that almost nobody will think of. Players see its `why` when the
+  golden is revealed, so make that line the interesting fact about it.
 - `hint` is one short, playful line nudging players away from the obvious answers.
 - `id` is a short snake_case slug for the prompt.
 - `decoys` are about as many WRONG answers as there are right ones: real things that clearly
@@ -327,7 +328,10 @@ def clean_prompt(gen: GenPrompt) -> Prompt:
     if not any(a in text.lower() for a in UOFT_ANCHORS):
         raise ValueError(f"{gen.id}: '{text}' doesn't name UofT or a UofT place")
 
-    prompt = Prompt(id=_slug(gen.id) or _slug(text), text=text, hint=hint, golden=golden, answers=answers)
+    golden_why = next((a.why.strip() for a in gen.answers if normalize(a.name) == normalize(golden)), "")
+    prompt = Prompt(
+        id=_slug(gen.id) or _slug(text), text=text, hint=hint, golden=golden, answers=answers, golden_why=golden_why
+    )
     # A "decoy" that matches a real answer would score, so drop those. So do ones sharing a whole name with an
     # answer ("Milk" next to "steamed milk"): players can defend those, and a dropped decoy costs nothing.
     decoys: dict[str, str] = {}

@@ -10,8 +10,9 @@ class Prompt:
     """One daily question.
 
     `answers` runs roughly from most to least obvious. The first name in each tuple is the canonical display
-    name; the rest are aliases. `golden` is the hidden deep-cut answer that earns a bonus. `decoys` are wrong
-    answers mixed into the autocomplete list so it doesn't give the answers away.
+    name; the rest are aliases. `golden` is the hidden deep-cut answer that earns a bonus, and `golden_why` is a line
+    on what it is, shown when it's revealed. `decoys` are wrong answers mixed into the autocomplete list so it doesn't
+    give the answers away.
     """
 
     id: str
@@ -20,6 +21,7 @@ class Prompt:
     golden: str
     answers: list[tuple[str, ...]] = field(default_factory=list)
     decoys: list[str] = field(default_factory=list)
+    golden_why: str = ""
 
     @property
     def canonical_answers(self) -> list[str]:
@@ -33,6 +35,7 @@ class Prompt:
             "golden": self.golden,
             "answers": [list(names) for names in self.answers],
             "decoys": list(self.decoys),
+            "golden_why": self.golden_why,
         }
 
     @classmethod
@@ -44,6 +47,7 @@ class Prompt:
             golden=data["golden"],
             answers=[tuple(names) for names in data["answers"]],
             decoys=data.get("decoys", []),
+            golden_why=data.get("golden_why", ""),
         )
 
 

@@ -58,6 +58,7 @@ def _preloaded_prompt(preview: PromptPreview) -> dict:
             "answers": answers,
             "decoys": p.decoys,
             "golden_answer": p.golden,
+            "golden_why": p.golden_why,
             **scoring.reveal(preview.counts, preview.players),
         },
     }
@@ -105,6 +106,7 @@ def _guess_response(out: GuessOutcome) -> dict:
         "rarity": scoring.label_for_points(g.points, out.golden) if out.valid else None,
         "golden": out.golden,
         "golden_answer": out.prompt.golden,
+        "golden_why": out.prompt.golden_why,
         **out.reveal,
     }
 

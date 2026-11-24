@@ -50,6 +50,7 @@ def test_daily_payload_shape_is_stable(client):
         assert [a["names"] for a in p["play"]["answers"]] == [list(names) for names in prompt.answers]
         assert p["play"]["decoys"] == prompt.decoys
         assert p["play"]["golden_answer"] == prompt.golden
+        assert p["play"]["golden_why"] == prompt.golden_why
         assert p["play"]["valid_answers"] == len(prompt.answers)
 
 

@@ -27,7 +27,8 @@ need_day() {
 }
 need_py() { [ -x "$PY" ] || die "set up the backend venv first: cd src && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt"; }
 query_ro() { supabase db query --remote --read-only "$1" -o json </dev/null 2>/dev/null; }
-rows() { python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin).get("rows", [])))'; }
+# The CLI prints a bare list of rows in a terminal but wraps them as {"rows": [...]} for agents.
+rows() { python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps(d if isinstance(d, list) else d.get("rows", [])))'; }
 today() { TZ=America/Toronto date +%F; }
 
 cmd=${1:-}; day=${2:-}

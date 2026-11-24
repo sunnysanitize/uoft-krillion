@@ -254,6 +254,9 @@ function AnswerCard({
                     </span>
                     <span className="text-xs tabular-nums text-slate">{a.pct}%</span>
                     <span className={`w-10 text-right font-pixel tabular-nums ${TONE_TEXT[t]}`}>+{a.points}</span>
+                    {a.golden && r.golden_why && (
+                      <span className="col-span-3 col-start-2 text-xs text-mist">{r.golden_why}</span>
+                    )}
                   </li>
                 );
               })}

@@ -18,6 +18,7 @@ export type LocalPlay = {
   answers: LocalAnswer[];
   decoys: string[];
   golden_answer: string;
+  golden_why?: string;
   top: { answer: string; pct: number }[];
   deep_cuts: string[];
   players: number;
@@ -51,6 +52,7 @@ export type GuessResult = {
   rarity: Rarity | null;
   golden: boolean;
   golden_answer: string;
+  golden_why?: string;
   top: { answer: string; pct: number }[];
   deep_cuts: string[];
   players: number;

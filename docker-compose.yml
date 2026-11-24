@@ -1,0 +1,29 @@
+# Local backend: Postgres + the API. Run `docker compose up --build`, then the web app with `npm run dev`.
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 2s
+      retries: 15
+
+  api:
+    build: src
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/postgres
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      CORS_ORIGINS: http://localhost:3000
+    ports:
+      - "8000:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:

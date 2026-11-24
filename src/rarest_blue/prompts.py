@@ -4,7 +4,8 @@ Each prompt lists its accepted answers roughly from most to least obvious.
 The first entry of each answer tuple is the canonical display name; the rest
 are aliases. List order seeds the starting popularity so the very first
 players of the day still get meaningful rarity scores. `golden` is the one
-hidden deep-cut answer per prompt that earns a bonus.
+hidden deep-cut answer per prompt that earns a bonus. `decoys` are wrong
+answers mixed into the autocomplete list so it doesn't give the answers away.
 """
 
 from dataclasses import dataclass, field
@@ -17,6 +18,7 @@ class Prompt:
     hint: str
     golden: str
     answers: list[tuple[str, ...]] = field(default_factory=list)
+    decoys: list[str] = field(default_factory=list)
 
 
 PROMPTS: list[Prompt] = [
@@ -33,6 +35,20 @@ PROMPTS: list[Prompt] = [
             ("Innis College", "innis"),
             ("New College", "new"),
             ("Woodsworth College", "woodsworth", "woody"),
+        ],
+        decoys=[
+            "Massey College",
+            "Knox College",
+            "Emmanuel College",
+            "Wycliffe College",
+            "Regis College",
+            "St. Hilda's College",
+            "Loretto College",
+            "Glendon College",
+            "Scarborough College",
+            "Erindale College",
+            "Huron University College",
+            "King's University College",
         ],
     ),
     Prompt(
@@ -86,6 +102,20 @@ PROMPTS: list[Prompt] = [
             ("Whitney Hall", "whitney"),
             ("Old Victoria College Building", "old vic"),
         ],
+        decoys=[
+            "Deerfield Hall",
+            "Instructional Centre",
+            "Kerr Hall",
+            "Vari Hall",
+            "Ross Building",
+            "Maanjiwe nendamowinan",
+            "Highland Hall",
+            "Student Learning Centre",
+            "Scott Library",
+            "Casa Loma",
+            "Royal Ontario Museum",
+            "Bladen Wing",
+        ],
     ),
     Prompt(
         id="subway",
@@ -106,6 +136,23 @@ PROMPTS: list[Prompt] = [
             ("Osgoode",),
             ("Dundas", "tmu"),
             ("Yonge", "yonge station"),
+        ],
+        decoys=[
+            "Union",
+            "King",
+            "Queen",
+            "St. Andrew",
+            "Christie",
+            "Ossington",
+            "Sherbourne",
+            "Castle Frank",
+            "Rosedale",
+            "Summerhill",
+            "Dupont",
+            "St. Clair",
+            "Eglinton",
+            "Lansdowne",
+            "Broadview",
         ],
     ),
     Prompt(
@@ -190,6 +237,20 @@ PROMPTS: list[Prompt] = [
             ("HST",),
             ("TRA",),
         ],
+        decoys=[
+            "CPS",
+            "MTH",
+            "ECN",
+            "BUS",
+            "GEO",
+            "SCI",
+            "CMP",
+            "BIOL",
+            "CHEM",
+            "PSYC",
+            "ECON",
+            "COMP",
+        ],
     ),
     Prompt(
         id="varsity",
@@ -227,6 +288,20 @@ PROMPTS: list[Prompt] = [
             ("Artistic Swimming", "synchronized swimming", "synchro"),
             ("Sailing",),
             ("Triathlon",),
+        ],
+        decoys=[
+            "Cricket",
+            "Boxing",
+            "Dodgeball",
+            "Handball",
+            "Bowling",
+            "Archery",
+            "Table Tennis",
+            "Snowboarding",
+            "Equestrian",
+            "Netball",
+            "Kickboxing",
+            "Polo",
         ],
     ),
     Prompt(
@@ -270,6 +345,17 @@ PROMPTS: list[Prompt] = [
             ("Centre for Criminology Library", "criminology"),
             ("Petro Jacyk Resource Centre", "petro jacyk"),
         ],
+        decoys=[
+            "Toronto Reference Library",
+            "Scott Library",
+            "Mills Memorial Library",
+            "Stauffer Library",
+            "Dana Porter Library",
+            "Lillian H. Smith Library",
+            "Osgoode Hall Law Library",
+            "Library and Archives Canada",
+            "Archives of Ontario",
+        ],
     ),
     Prompt(
         id="ontario_unis",
@@ -298,6 +384,19 @@ PROMPTS: list[Prompt] = [
             ("OCAD University", "ocad", "ocad u"),
             ("Université de Hearst", "hearst", "universite de hearst"),
             ("Université de l'Ontario français", "uof", "universite de lontario francais"),
+        ],
+        decoys=[
+            "Seneca Polytechnic",
+            "Humber College",
+            "George Brown College",
+            "Sheridan College",
+            "Centennial College",
+            "McGill University",
+            "Concordia University",
+            "University of British Columbia",
+            "Dalhousie University",
+            "Université de Montréal",
+            "University of Manitoba",
         ],
     ),
     Prompt(
@@ -336,6 +435,18 @@ PROMPTS: list[Prompt] = [
             ("Madison Avenue", "madison"),
             ("Lennox Street", "lennox"),
         ],
+        decoys=[
+            "Yonge Street",
+            "Dundas Street West",
+            "Queen Street West",
+            "Bathurst Street",
+            "Davenport Road",
+            "Ossington Avenue",
+            "Front Street",
+            "King Street",
+            "Dupont Street",
+            "Danforth Avenue",
+        ],
     ),
     Prompt(
         id="faculties",
@@ -362,6 +473,17 @@ PROMPTS: list[Prompt] = [
             ("School of Graduate Studies", "sgs", "graduate studies"),
             ("School of Continuing Studies", "continuing studies", "scs"),
             ("Institute of Health Policy, Management & Evaluation", "ihpme"),
+        ],
+        decoys=[
+            "Ivey Business School",
+            "Schulich School of Business",
+            "Osgoode Hall Law School",
+            "Lassonde School of Engineering",
+            "Faculty of Journalism",
+            "Faculty of Veterinary Medicine",
+            "Faculty of Agriculture",
+            "School of Hospitality and Tourism",
+            "Faculty of Fine Arts",
         ],
     ),
     Prompt(
@@ -411,6 +533,20 @@ PROMPTS: list[Prompt] = [
             ("GGR124",),
             ("CSC108",),
         ],
+        decoys=[
+            "CSC263",
+            "MAT237",
+            "STA247",
+            "ECO200",
+            "CSC207",
+            "CSC209",
+            "BIO230",
+            "CHM247",
+            "PHY250",
+            "MAT257",
+            "CSC236",
+            "ECO220",
+        ],
     ),
     Prompt(
         id="alumni",
@@ -445,7 +581,43 @@ PROMPTS: list[Prompt] = [
             ("Ernest McCulloch", "mcculloch"),
             ("Roberta Bondar", "bondar"),
         ],
+        decoys=[
+            "Justin Trudeau",
+            "Pierre Trudeau",
+            "Drake",
+            "Leonard Cohen",
+            "Wayne Gretzky",
+            "Celine Dion",
+            "Ryan Reynolds",
+            "Jim Carrey",
+            "Alexander Graham Bell",
+            "Mike Lazaridis",
+            "Yoshua Bengio",
+            "Alice Munro",
+        ],
     ),
 ]
 
 PROMPTS_BY_ID: dict[str, Prompt] = {p.id: p for p in PROMPTS}
+
+
+def to_dict(prompt: Prompt) -> dict:
+    return {
+        "id": prompt.id,
+        "text": prompt.text,
+        "hint": prompt.hint,
+        "golden": prompt.golden,
+        "answers": [list(names) for names in prompt.answers],
+        "decoys": list(prompt.decoys),
+    }
+
+
+def from_dict(data: dict) -> Prompt:
+    return Prompt(
+        id=data["id"],
+        text=data["text"],
+        hint=data["hint"],
+        golden=data["golden"],
+        answers=[tuple(names) for names in data["answers"]],
+        decoys=data.get("decoys", []),
+    )

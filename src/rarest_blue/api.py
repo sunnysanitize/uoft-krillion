@@ -2,17 +2,26 @@
 
 import os
 import random
+from contextlib import asynccontextmanager
+from datetime import date
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from . import db, game
-from .prompts import PROMPTS_BY_ID
+from .prompts import Prompt
 
 COLLEGES = ["Trinity", "Victoria", "UC", "St. Mike's", "Innis", "New", "Woodsworth", "UTM", "UTSC", "Grad / Other"]
 
-app = FastAPI(title="Rarest Blue")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    db.init_schema()
+    yield
+
+
+app = FastAPI(title="Rarest Blue", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=os.environ.get("CORS_ORIGINS", "http://localhost:3000").split(","),
@@ -33,16 +42,21 @@ class FinishIn(BaseModel):
     college: str | None = None
 
 
-def _counts(conn, day: str, prompt_id: str) -> dict[str, int]:
-    prompt = PROMPTS_BY_ID[prompt_id]
-    counts = game.prior_counts(prompt)
-    rows = conn.execute(
-        "SELECT answer, COUNT(*) AS n FROM guesses WHERE day = ? AND prompt_id = ? AND answer IS NOT NULL GROUP BY answer",
-        (day, prompt_id),
-    )
-    for row in rows:
-        counts[row["answer"]] = counts.get(row["answer"], 0) + row["n"]
-    return counts
+def _prompts_for(conn, day: date) -> list[Prompt]:
+    """The day's set: whatever the nightly job stored, else the built-in fallback.
+
+    The fallback is stored on first use so the day's set can't change mid-day.
+    """
+    prompts = db.load_prompts(conn, day)
+    if prompts is None:
+        db.save_prompts(conn, day, game.fallback_prompts(day), source="fallback")
+        prompts = db.load_prompts(conn, day)
+    return prompts
+
+
+def _suggestions(prompt: Prompt) -> list[str]:
+    """Autocomplete list: every canonical answer plus the decoys, alphabetized so order leaks nothing."""
+    return sorted({names[0] for names in prompt.answers} | set(prompt.decoys), key=str.lower)
 
 
 def _reveal(counts: dict[str, int], players: int) -> dict:
@@ -58,6 +72,8 @@ def _reveal(counts: dict[str, int], players: int) -> dict:
 @app.get("/api/daily")
 def daily():
     day = game.today()
+    with db.connect() as conn:
+        prompts = _prompts_for(conn, day)
     return {
         "day": day.isoformat(),
         "number": game.puzzle_number(day),
@@ -65,40 +81,41 @@ def daily():
         "meters_per_point": game.METERS_PER_POINT,
         "zones": [{"start": start, "name": name} for start, name in game.ZONES],
         "colleges": COLLEGES,
-        "prompts": [{"id": p.id, "text": p.text, "hint": p.hint} for p in game.daily_prompts(day)],
+        "prompts": [{"id": p.id, "text": p.text, "hint": p.hint, "suggestions": _suggestions(p)} for p in prompts],
     }
 
 
 @app.post("/api/guess")
 def guess(body: GuessIn):
     day = game.today()
-    if body.prompt_id not in {p.id for p in game.daily_prompts(day)}:
-        raise HTTPException(400, "That prompt isn't in today's set.")
-    prompt = PROMPTS_BY_ID[body.prompt_id]
     key = day.isoformat()
 
     with db.connect() as conn:
+        prompt = next((p for p in _prompts_for(conn, day) if p.id == body.prompt_id), None)
+        if prompt is None:
+            raise HTTPException(400, "That prompt isn't in today's set.")
         existing = conn.execute(
-            "SELECT answer, points, share FROM guesses WHERE day = ? AND prompt_id = ? AND player_id = ?",
+            "SELECT answer, points, share FROM guesses WHERE day = %s AND prompt_id = %s AND player_id = %s",
             (key, body.prompt_id, body.player_id),
         ).fetchone()
         if existing:
             answer, points, share = existing["answer"], existing["points"], existing["share"]
         else:
             answer = game.match_answer(prompt, body.answer)
-            counts = _counts(conn, key, body.prompt_id)
+            counts = db.answer_counts(conn, key, prompt)
             share = counts.get(answer, 0) / sum(counts.values()) if answer else 1.0
             points = game.score(share) if answer else 0
             if answer == prompt.golden:
                 points += game.GOLDEN_BONUS
             conn.execute(
-                "INSERT INTO guesses (day, prompt_id, player_id, raw, answer, points, share) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO guesses (day, prompt_id, player_id, raw, answer, points, share) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
                 (key, body.prompt_id, body.player_id, body.answer, answer, points, share),
             )
         players = conn.execute(
-            "SELECT COUNT(*) FROM guesses WHERE day = ? AND prompt_id = ?", (key, body.prompt_id)
-        ).fetchone()[0]
-        reveal = _reveal(_counts(conn, key, body.prompt_id), players)
+            "SELECT COUNT(*) AS n FROM guesses WHERE day = %s AND prompt_id = %s", (key, body.prompt_id)
+        ).fetchone()["n"]
+        reveal = _reveal(db.answer_counts(conn, key, prompt), players)
 
     return {
         "valid": answer is not None,
@@ -118,14 +135,19 @@ def finish(body: FinishIn):
     college = body.college if body.college in COLLEGES else None
     with db.connect() as conn:
         total = conn.execute(
-            "SELECT COALESCE(SUM(points), 0) FROM guesses WHERE day = ? AND player_id = ?", (key, body.player_id)
-        ).fetchone()[0]
+            "SELECT COALESCE(SUM(points), 0)::int AS total FROM guesses WHERE day = %s AND player_id = %s",
+            (key, body.player_id),
+        ).fetchone()["total"]
         conn.execute(
-            "INSERT OR REPLACE INTO finishes (day, player_id, nickname, college, score) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO finishes (day, player_id, nickname, college, score) VALUES (%s, %s, %s, %s, %s) "
+            "ON CONFLICT (day, player_id) DO UPDATE "
+            "SET nickname = EXCLUDED.nickname, college = EXCLUDED.college, score = EXCLUDED.score",
             (key, body.player_id, body.nickname.strip(), college, total),
         )
-        beaten = conn.execute("SELECT COUNT(*) FROM finishes WHERE day = ? AND score < ?", (key, total)).fetchone()[0]
-        field = conn.execute("SELECT COUNT(*) FROM finishes WHERE day = ?", (key,)).fetchone()[0]
+        beaten = conn.execute(
+            "SELECT COUNT(*) AS n FROM finishes WHERE day = %s AND score < %s", (key, total)
+        ).fetchone()["n"]
+        field = conn.execute("SELECT COUNT(*) AS n FROM finishes WHERE day = %s", (key,)).fetchone()["n"]
     percentile = round(100 * beaten / (field - 1)) if field > 1 else 100
     return {"score": total, "percentile": percentile, "players": field}
 
@@ -135,11 +157,11 @@ def leaderboard():
     key = game.today().isoformat()
     with db.connect() as conn:
         players = conn.execute(
-            "SELECT nickname, college, score FROM finishes WHERE day = ? ORDER BY score DESC LIMIT 15", (key,)
+            "SELECT nickname, college, score FROM finishes WHERE day = %s ORDER BY score DESC LIMIT 15", (key,)
         ).fetchall()
         colleges = conn.execute(
-            "SELECT college, ROUND(AVG(score)) AS avg, COUNT(*) AS n FROM finishes "
-            "WHERE day = ? AND college IS NOT NULL GROUP BY college ORDER BY avg DESC",
+            "SELECT college, ROUND(AVG(score))::int AS avg, COUNT(*) AS n FROM finishes "
+            "WHERE day = %s AND college IS NOT NULL GROUP BY college ORDER BY avg DESC",
             (key,),
         ).fetchall()
     return {"players": [dict(r) for r in players], "colleges": [dict(r) for r in colleges]}

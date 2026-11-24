@@ -1,6 +1,25 @@
+import json
+from pathlib import Path
+
 from rarest_blue.domain.matching import match_answer, normalize, recognize
 from rarest_blue.domain.models import Prompt
 from rarest_blue.domain.prompt_bank import PROMPTS, PROMPTS_BY_ID
+
+
+def test_shared_browser_matching_fixture_tracks_server_rules():
+    fixture = json.loads((Path(__file__).resolve().parents[1] / "fixtures/local_matching.json").read_text())
+    prompt = Prompt.from_dict(fixture["prompt"])
+    for case in fixture["cases"]:
+        raw = case["raw"]
+        recognized, suggestion = recognize(prompt, raw)
+        answer = match_answer(prompt, raw)
+        assert normalize(raw) == case["normalized"]
+        assert answer == case["answer"]
+        assert case["check"] == {
+            "recognized": recognized,
+            "correct": recognized and answer is not None,
+            "suggestion": suggestion,
+        }
 
 
 def test_aliases_and_typos_match():

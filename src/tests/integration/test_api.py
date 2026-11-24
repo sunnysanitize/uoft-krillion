@@ -40,12 +40,31 @@ def test_full_round(client):
 
 
 def test_daily_payload_shape_is_stable(client):
-    """The web app depends on these exact keys; answers must never appear in it."""
+    """Load all local matching data and scores with the questions, before the first Dive."""
     daily = client.get("/api/daily").json()
     assert set(daily) == {"day", "number", "time_limit", "meters_per_point", "zones", "prompts"}
     assert len(daily["prompts"]) == rules.PROMPTS_PER_DAY
     for p in daily["prompts"]:
-        assert set(p) == {"id", "text", "hint"}
+        assert set(p) == {"id", "text", "hint", "play"}
+        prompt = PROMPTS_BY_ID[p["id"]]
+        assert [a["names"] for a in p["play"]["answers"]] == [list(names) for names in prompt.answers]
+        assert p["play"]["decoys"] == prompt.decoys
+        assert p["play"]["golden_answer"] == prompt.golden
+        assert p["play"]["valid_answers"] == len(prompt.answers)
+
+
+def test_preloaded_score_matches_server_submission(client, uow):
+    daily = client.get("/api/daily").json()
+    for prompt in daily["prompts"]:
+        answer = prompt["play"]["answers"][0]
+        result = _guess(client, "player-aaaa", prompt["id"], answer["names"][0])
+        for field in ("points", "share_pct", "rarity", "golden"):
+            assert result[field] == answer[field]
+    # Preloading again is read-only and includes the recorded popularity.
+    refreshed = client.get("/api/daily").json()
+    assert all(p["play"]["players"] == 1 for p in refreshed["prompts"])
+    with uow() as tx:
+        assert all(tx.guesses.player_count(days.today(), p["id"]) == 1 for p in refreshed["prompts"])
 
 
 def test_serves_stored_set(client, uow):

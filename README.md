@@ -87,9 +87,11 @@ If a day has no stored set when its first request arrives, the API stores and se
 Try it without storing anything: `OPENROUTER_API_KEY=... .venv/bin/python -m rarest_blue.entrypoints.cli.generate --dry-run`.
 Use `--day YYYY-MM-DD` to generate a specific day.
 
-Each prompt in `/api/daily` has a `suggestions` list for the answer box's autocomplete. It holds every right answer
-plus the generated decoys (plausible wrong answers), sorted alphabetically, so the dropdown doesn't give the answers
-away. The built-in fallback prompts have hand-written decoys.
+Each prompt in `/api/daily` includes a `play` bundle with accepted names and aliases, decoys, and a rarity-score
+snapshot. The browser matches answers and starts the scored animation immediately. Guesses are persisted locally
+and recorded on the server in the background; failed saves retry on reconnection, refresh, or the results screen's
+Retry button. Server confirmations reconcile live scores, and standings wait until all guesses are recorded.
+This deliberately makes the answer data available in the browser in exchange for instant gameplay.
 
 ## Reviewing rejected guesses
 

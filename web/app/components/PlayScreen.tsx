@@ -138,7 +138,7 @@ export function PlayScreen({
               </div>
             </div>
             <PixelButton disabled={submitting || !answer.trim()} className="self-start min-w-24 px-3.5! text-base! sm:px-7! sm:text-lg!">
-              {submitting ? "Diving…" : "Dive"}
+              Dive
             </PixelButton>
           </div>
         </div>

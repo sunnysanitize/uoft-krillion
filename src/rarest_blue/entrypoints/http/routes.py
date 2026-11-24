@@ -4,7 +4,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from ...application.gameplay import CheckOutcome, GameService, GuessOutcome, NotPlayedYet, UnknownPrompt
+from ...application.gameplay import CheckOutcome, GameService, GuessOutcome, NotPlayedYet, PromptPreview, UnknownPrompt
 from ...domain import days, rules, scoring
 from .schemas import CheckIn, FinishIn, GuessIn, PlayerIn, PlayerPromptIn
 
@@ -24,15 +24,42 @@ Game = Annotated[GameService, Depends(get_game)]
 
 @router.get("/daily")
 def daily(game: Game):
-    day, prompts = game.daily()
+    day, previews = game.preload()
     return {
         "day": day.isoformat(),
         "number": days.puzzle_number(day),
         "time_limit": rules.TIME_LIMIT_SECONDS,
         "meters_per_point": rules.METERS_PER_POINT,
         "zones": [{"start": start, "name": name} for start, name in rules.ZONES],
-        # Never the answers: the browser only ever sees the question.
-        "prompts": [{"id": p.id, "text": p.text, "hint": p.hint} for p in prompts],
+        "prompts": [_preloaded_prompt(preview) for preview in previews],
+    }
+
+
+def _preloaded_prompt(preview: PromptPreview) -> dict:
+    p = preview.prompt
+    answers = []
+    for names in p.answers:
+        share = scoring.share_of(names[0], preview.counts)
+        golden = names[0] == p.golden
+        answers.append(
+            {
+                "names": list(names),
+                "points": scoring.points_for(p, names[0], share),
+                "share_pct": round(100 * share, 1),
+                "rarity": scoring.rarity_label(share, golden),
+                "golden": golden,
+            }
+        )
+    return {
+        "id": p.id,
+        "text": p.text,
+        "hint": p.hint,
+        "play": {
+            "answers": answers,
+            "decoys": p.decoys,
+            "golden_answer": p.golden,
+            **scoring.reveal(preview.counts, preview.players),
+        },
     }
 
 

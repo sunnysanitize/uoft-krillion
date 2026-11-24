@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Smoke-tests a built image: it runs as non-root, starts, serves a full day, and never leaks answers.
+# Smoke-tests a built image: it runs as non-root, starts and preloads a playable full day.
 #
 #   deploy/smoke-image.sh <image> <database-url>
 #
@@ -28,9 +28,10 @@ import json, sys
 d = json.loads(sys.argv[1])
 assert len(d["prompts"]) == 7, "expected 7 prompts"
 for p in d["prompts"]:
-    # Only these keys may reach players: no answers, aliases or golden krill.
-    assert set(p) == {"id", "text", "hint"}, f"unexpected keys in prompt: {sorted(p)}"
-print("smoke ok: 7 prompts, no answers in payload")
+    assert set(p) == {"id", "text", "hint", "play"}, f"unexpected keys in prompt: {sorted(p)}"
+    assert p["play"]["answers"], "missing preloaded matching data"
+    assert p["play"]["golden_answer"], "missing preloaded bonus answer"
+print("smoke ok: 7 prompts with preloaded matching and scores")
 PY
 
 code=$(curl -s -o /dev/null -w '%{http_code}' localhost:8080/docs)

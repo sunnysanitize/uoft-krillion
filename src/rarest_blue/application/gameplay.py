@@ -50,6 +50,13 @@ class FinishOutcome:
     players: int
 
 
+@dataclass(frozen=True)
+class PromptPreview:
+    prompt: Prompt
+    counts: dict[str, int]
+    players: int
+
+
 def prompts_for(uow: UnitOfWork, day: date) -> list[Prompt]:
     """The day's set: whatever the nightly job stored, else the built-in fallback.
 
@@ -72,6 +79,19 @@ class GameService:
         day = self._clock()
         with self._uow() as uow:
             return day, prompts_for(uow, day)
+
+    def preload(self) -> tuple[date, list[PromptPreview]]:
+        """Load matching data and a rarity snapshot once, before play begins."""
+        day = self._clock()
+        with self._uow() as uow:
+            return day, [
+                PromptPreview(
+                    prompt,
+                    scoring.answer_counts(prompt, uow.guesses.tallies(day, prompt.id)),
+                    uow.guesses.player_count(day, prompt.id),
+                )
+                for prompt in prompts_for(uow, day)
+            ]
 
     def check(self, prompt_id: str, raw: str) -> CheckOutcome:
         """Before a guess counts: is it recognized, and is it right? Only right answers spend the prompt;

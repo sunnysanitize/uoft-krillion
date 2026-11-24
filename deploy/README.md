@@ -36,7 +36,7 @@ aren't secrets). Also apply the Supabase migration once (`supabase/README.md`).
   - re-checks the lockdown with `supabase/verify.sh`;
   - runs `ruff` lint and format checks, including the architecture test that keeps layers pointing inward;
   - runs `pip-audit` on the full hash-locked dependency set (`src/requirements.lock`);
-  - builds the image and runs `deploy/smoke-image.sh`: non-root, serves 7 prompts, no answer keys in the payload,
+  - builds the image and runs `deploy/smoke-image.sh`: non-root, serves 7 prompts with preloaded matching and scores,
     no `/docs`;
   - checks the Cloud Run manifests render with no unfilled variables.
 - **`backend-deploy.yml`** runs on merge to `main`. It runs CI again, then:

@@ -2,6 +2,26 @@ export type Prompt = {
   id: string;
   text: string;
   hint: string;
+  /** Loaded with the daily set; optional while an older backend is deploying. */
+  play?: LocalPlay;
+};
+
+export type LocalAnswer = {
+  names: string[];
+  points: number;
+  share_pct: number;
+  rarity: Rarity;
+  golden: boolean;
+};
+
+export type LocalPlay = {
+  answers: LocalAnswer[];
+  decoys: string[];
+  golden_answer: string;
+  top: { answer: string; pct: number }[];
+  deep_cuts: string[];
+  players: number;
+  valid_answers: number;
 };
 
 /** Whether a typed answer is one the game knows, whether it's right, and else a "did you mean". */
@@ -36,6 +56,8 @@ export type GuessResult = {
   players: number;
   valid_answers: number;
   raw?: string;
+  /** Local persistence only: false until the background guess has been recorded. */
+  synced?: boolean;
 };
 
 /** One row of a prompt's full answer list, shown after you've played it. */

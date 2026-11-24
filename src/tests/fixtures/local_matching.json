@@ -1,0 +1,398 @@
+{
+  "prompt": {
+    "id": "matching_fixture",
+    "text": "Matching fixture",
+    "hint": "",
+    "golden": "Woodsworth College",
+    "answers": [
+      [
+        "Trinity College",
+        "trinity",
+        "trin"
+      ],
+      [
+        "Victoria College",
+        "victoria",
+        "vic"
+      ],
+      [
+        "University College",
+        "uc",
+        "university"
+      ],
+      [
+        "St. Michael's College",
+        "st michaels",
+        "saint michaels",
+        "st mikes",
+        "smc",
+        "st mike"
+      ],
+      [
+        "Innis College",
+        "innis"
+      ],
+      [
+        "New College",
+        "new"
+      ],
+      [
+        "Woodsworth College",
+        "woodsworth",
+        "woody"
+      ],
+      [
+        "Lash Miller Chemical Laboratories"
+      ],
+      [
+        "Koffler Student Services Centre"
+      ],
+      [
+        "Innis College Library",
+        "innis library"
+      ],
+      [
+        "Spadina"
+      ],
+      [
+        "University Library"
+      ],
+      [
+        "MAT137"
+      ],
+      [
+        "MAT157"
+      ],
+      [
+        "Université de Hearst",
+        "hearst"
+      ]
+    ],
+    "decoys": [
+      "Massey College",
+      "Knox College",
+      "Emmanuel College",
+      "Wycliffe College",
+      "Regis College",
+      "St. Hilda's College",
+      "Loretto College",
+      "Glendon College",
+      "Scarborough College",
+      "Erindale College",
+      "Huron University College",
+      "King's University College"
+    ]
+  },
+  "cases": [
+    {
+      "raw": "Vic",
+      "normalized": "vic",
+      "answer": "Victoria College",
+      "check": {
+        "recognized": true,
+        "correct": true,
+        "suggestion": null
+      }
+    },
+    {
+      "raw": "st. mike's",
+      "normalized": "saint mikes",
+      "answer": "St. Michael's College",
+      "check": {
+        "recognized": true,
+        "correct": true,
+        "suggestion": null
+      }
+    },
+    {
+      "raw": "Woodsworht",
+      "normalized": "woodsworht",
+      "answer": "Woodsworth College",
+      "check": {
+        "recognized": false,
+        "correct": false,
+        "suggestion": "Woodsworth College"
+      }
+    },
+    {
+      "raw": "Masey College",
+      "normalized": "masey college",
+      "answer": null,
+      "check": {
+        "recognized": false,
+        "correct": false,
+        "suggestion": "Massey College"
+      }
+    },
+    {
+      "raw": "Ryerson Hall",
+      "normalized": "ryerson hall",
+      "answer": null,
+      "check": {
+        "recognized": false,
+        "correct": false,
+        "suggestion": null
+      }
+    },
+    {
+      "raw": "",
+      "normalized": "",
+      "answer": null,
+      "check": {
+        "recognized": false,
+        "correct": false,
+        "suggestion": null
+      }
+    },
+    {
+      "raw": "  ",
+      "normalized": "",
+      "answer": null,
+      "check": {
+        "recognized": false,
+        "correct": false,
+        "suggestion": null
+      }
+    },
+    {
+      "raw": "MAT",
+      "normalized": "mat",
+      "answer": null,
+      "check": {
+        "recognized": false,
+        "correct": false,
+        "suggestion": null
+      }
+    },
+    {
+      "raw": "mat137",
+      "normalized": "mat137",
+      "answer": "MAT137",
+      "check": {
+        "recognized": true,
+        "correct": true,
+        "suggestion": null
+      }
+    },
+    {
+      "raw": "MAT157",
+      "normalized": "mat157",
+      "answer": "MAT157",
+      "check": {
+        "recognized": true,
+        "correct": true,
+        "suggestion": null
+      }
+    },
+    {
+      "raw": "University",
+      "normalized": "university",
+      "answer": "University College",
+      "check": {
+        "recognized": true,
+        "correct": true,
+        "suggestion": null
+      }
+    },
+    {
+      "raw": "Faculty",
+      "normalized": "faculty",
+      "answer": null,
+      "check": {
+        "recognized": false,
+        "correct": false,
+        "suggestion": null
+      }
+    },
+    {
+      "raw": "Lash Miller Chemical",
+      "normalized": "lash miller chemical",
+      "answer": "Lash Miller Chemical Laboratories",
+      "check": {
+        "recognized": true,
+        "correct": true,
+        "suggestion": null
+      }
+    },
+    {
+      "raw": "Koffler Student",
+      "normalized": "koffler student",
+      "answer": "Koffler Student Services Centre",
+      "check": {
+        "recognized": true,
+        "correct": true,
+        "suggestion": null
+      }
+    },
+    {
+      "raw": "Spadina Station",
+      "normalized": "spadina station",
+      "answer": "Spadina",
+      "check": {
+        "recognized": true,
+        "correct": true,
+        "suggestion": null
+      }
+    },
+    {
+      "raw": "Innis Library",
+      "normalized": "innis library",
+      "answer": "Innis College Library",
+      "check": {
+        "recognized": true,
+        "correct": true,
+        "suggestion": null
+      }
+    },
+    {
+      "raw": "Université de Hearst",
+      "normalized": "universite de hearst",
+      "answer": "Université de Hearst",
+      "check": {
+        "recognized": true,
+        "correct": true,
+        "suggestion": null
+      }
+    },
+    {
+      "raw": "St. Michaels",
+      "normalized": "saint michaels",
+      "answer": "St. Michael's College",
+      "check": {
+        "recognized": true,
+        "correct": true,
+        "suggestion": null
+      }
+    },
+    {
+      "raw": "Saint Michaels College",
+      "normalized": "saint michaels college",
+      "answer": "St. Michael's College",
+      "check": {
+        "recognized": true,
+        "correct": true,
+        "suggestion": null
+      }
+    },
+    {
+      "raw": "Knox",
+      "normalized": "knox",
+      "answer": null,
+      "check": {
+        "recognized": true,
+        "correct": false,
+        "suggestion": null
+      }
+    },
+    {
+      "raw": "Massey College",
+      "normalized": "massey college",
+      "answer": null,
+      "check": {
+        "recognized": true,
+        "correct": false,
+        "suggestion": null
+      }
+    },
+    {
+      "raw": "zzzzzz",
+      "normalized": "zzzzzz",
+      "answer": null,
+      "check": {
+        "recognized": false,
+        "correct": false,
+        "suggestion": null
+      }
+    },
+    {
+      "raw": "woods",
+      "normalized": "woods",
+      "answer": null,
+      "check": {
+        "recognized": false,
+        "correct": false,
+        "suggestion": "Woodsworth College"
+      }
+    },
+    {
+      "raw": "WOODSWORTH COLLEGE",
+      "normalized": "woodsworth college",
+      "answer": "Woodsworth College",
+      "check": {
+        "recognized": true,
+        "correct": true,
+        "suggestion": null
+      }
+    },
+    {
+      "raw": "Trnity",
+      "normalized": "trnity",
+      "answer": "Trinity College",
+      "check": {
+        "recognized": false,
+        "correct": false,
+        "suggestion": "Trinity College"
+      }
+    },
+    {
+      "raw": "New College",
+      "normalized": "new college",
+      "answer": "New College",
+      "check": {
+        "recognized": true,
+        "correct": true,
+        "suggestion": null
+      }
+    },
+    {
+      "raw": "The University of Toronto",
+      "normalized": "university toronto",
+      "answer": null,
+      "check": {
+        "recognized": false,
+        "correct": false,
+        "suggestion": "University College"
+      }
+    },
+    {
+      "raw": "Philosophy",
+      "normalized": "philosophy",
+      "answer": null,
+      "check": {
+        "recognized": false,
+        "correct": false,
+        "suggestion": null
+      }
+    },
+    {
+      "raw": "St. Hilda’s College",
+      "normalized": "saint hildas college",
+      "answer": null,
+      "check": {
+        "recognized": true,
+        "correct": false,
+        "suggestion": null
+      }
+    },
+    {
+      "raw": "Univeristy College",
+      "normalized": "univeristy college",
+      "answer": "University College",
+      "check": {
+        "recognized": false,
+        "correct": false,
+        "suggestion": "University College"
+      }
+    },
+    {
+      "raw": "innis librarey",
+      "normalized": "innis librarey",
+      "answer": "Innis College Library",
+      "check": {
+        "recognized": false,
+        "correct": false,
+        "suggestion": "Innis College Library"
+      }
+    }
+  ]
+}

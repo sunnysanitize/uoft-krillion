@@ -40,9 +40,10 @@ CREATE TABLE IF NOT EXISTS finishes (
     score INTEGER NOT NULL,
     PRIMARY KEY (day, player_id)
 );
--- Players used to represent a college; scores are individual now.
-ALTER TABLE finishes DROP COLUMN IF EXISTS college;
 """
+# Startup DDL must never wait on a busy table: Cloud Run kills an instance that doesn't listen within its probe window,
+# and a waiting ALTER also blocks every query behind it. Changes that need a table lock go in supabase/migrations/.
+SCHEMA_LOCK_TIMEOUT = "5s"
 
 
 # prepare_threshold=None: Supabase's transaction pooler can't hold prepared statements.
@@ -76,6 +77,7 @@ def open_pool(url: str, min_size: int = 1, max_size: int = 10) -> ConnectionPool
 
 def init_schema(url: str) -> None:
     with connect(url) as conn:
+        conn.execute(f"SET LOCAL lock_timeout = '{SCHEMA_LOCK_TIMEOUT}'")
         conn.execute(SCHEMA)
 
 

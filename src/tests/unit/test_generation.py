@@ -27,10 +27,9 @@ def test_clean_prompt_drops_decoys_that_would_score():
 def test_clean_prompt_rejects_bad_prompts():
     with pytest.raises(ValueError, match="usable answers"):
         generation.clean_prompt(gen_prompt("x", n=generation.MIN_ANSWERS - 1))
-    with pytest.raises(ValueError, match="too obvious"):
-        generation.clean_prompt(gen_prompt("x", golden_at=0))
-    with pytest.raises(ValueError, match="too obvious"):
-        generation.clean_prompt(gen_prompt("x", golden_at=5))  # not in the last third
+    # A golden outside the last third hands the bonus to the deepest answer.
+    assert generation.clean_prompt(gen_prompt("x", golden_at=0)).golden == "Answer x 16"
+    assert generation.clean_prompt(gen_prompt("x", golden_at=5)).golden == "Answer x 16"
     generic = gen_prompt("x")
     generic.text = "Name a Canadian province"
     with pytest.raises(ValueError, match="doesn't name UofT"):

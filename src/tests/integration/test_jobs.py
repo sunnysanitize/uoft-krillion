@@ -6,13 +6,13 @@ from rarest_blue.entrypoints.cli import generate as generate_cli
 from tests.factories import FakeWriter
 
 
-def test_generator_stores_tomorrow_once(database, uow):
+def test_generator_stores_two_days_ahead_once(database, uow):
     writer = FakeWriter()
-    tomorrow = days.today() + timedelta(days=1)
+    target = days.today() + timedelta(days=generate_cli.DAYS_AHEAD)
 
     assert generate_cli.main([], settings=database, writer=writer) == 0
     with uow() as tx:
-        stored = tx.prompts.get(tomorrow)
+        stored = tx.prompts.get(target)
     assert [p.id for p in stored] == [f"topic{i}" for i in range(rules.PROMPTS_PER_DAY)]
 
     assert generate_cli.main([], settings=database, writer=writer) == 0  # second run is a no-op

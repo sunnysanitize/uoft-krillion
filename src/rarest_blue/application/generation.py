@@ -250,7 +250,9 @@ def clean_prompt(gen: GenPrompt) -> Prompt:
     if golden is None:
         raise ValueError(f"{gen.id}: golden '{gen.golden}' isn't an answer")
     if canon.index(golden) < max(GOLDEN_MIN_INDEX, int(len(canon) * GOLDEN_MIN_FRACTION)):
-        raise ValueError(f"{gen.id}: golden '{golden}' is too obvious")
+        # Models sometimes pick a mid-list golden; the deepest answer is a fine stand-in.
+        log.info("%s: golden '%s' is too obvious, using '%s'", gen.id, golden, canon[-1])
+        golden = canon[-1]
     if not any(a in text.lower() for a in UOFT_ANCHORS):
         raise ValueError(f"{gen.id}: '{text}' doesn't name UofT or a UofT place")
 

@@ -43,6 +43,26 @@ The table definitions match `SCHEMA` in `src/rarest_blue/infrastructure/postgres
 The migration is idempotent, so it doesn't matter whether it runs before or after the backend first boots
 (`postgres.init_schema` only runs `CREATE TABLE IF NOT EXISTS`). Run `verify.sh` again after any schema change.
 
+## Supabase CLI
+
+`supabase/config.toml` is checked in, so the CLI works from the repo root. One-time per machine:
+
+```bash
+supabase login                                   # opens the browser
+supabase link --project-ref glwmhcxhxjbbevgtydyv # asks for the database password
+```
+
+Then, for the hosted project, always pass `--remote` (without it the CLI targets a local Docker stack):
+
+```bash
+supabase migration list --remote   # local vs applied migrations
+supabase db push --remote          # apply new files in supabase/migrations/
+supabase/verify.sh                 # re-check the lockdown afterwards
+```
+
+New schema changes go in a new file in `supabase/migrations/` (`supabase migration new <name>`). Don't edit an
+applied migration. Mirror the change in `SCHEMA` in `src/rarest_blue/infrastructure/postgres.py`.
+
 ## Keeping it safe
 
 - `DATABASE_URL` is the master key. Keep it in `.env` (gitignored) and the host's secret store, never in `web/` or in

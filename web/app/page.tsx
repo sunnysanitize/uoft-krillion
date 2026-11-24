@@ -1,15 +1,16 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { DepthRuler } from "./components/DepthRuler";
 import { Hud } from "./components/Hud";
 import { IntroScreen } from "./components/IntroScreen";
 import { PlayScreen } from "./components/PlayScreen";
 import { ResultsScreen } from "./components/ResultsScreen";
-import { RevealScreen } from "./components/RevealScreen";
+import { DevReset } from "./components/DevReset";
+import { Flash } from "./components/Flash";
+import { BubbleRush } from "./components/BubbleRush";
 import { Scene } from "./components/Scene";
 import { Label, Panel } from "./components/ui";
-import { useDive } from "./lib/useDive";
+import { SINK_EASE, SINK_MS, sinkEase, sinkMs, useDive } from "./lib/useDive";
 
 // Matches the Scene camera transition (duration-[1800ms]), so the clock starts once we're underwater.
 const DESCENT_MS = 1800;
@@ -30,6 +31,25 @@ export default function Game() {
       setDescending(false);
     }, DESCENT_MS);
   }
+
+  // Feed the pointer position to CSS (--px, --py in -1..1) for parallax and tilt.
+  useEffect(() => {
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    let frame = 0;
+    const move = (e: PointerEvent) => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const root = document.documentElement.style;
+        root.setProperty("--px", ((e.clientX / innerWidth) * 2 - 1).toFixed(3));
+        root.setProperty("--py", ((e.clientY / innerHeight) * 2 - 1).toFixed(3));
+      });
+    };
+    addEventListener("pointermove", move);
+    return () => {
+      removeEventListener("pointermove", move);
+      cancelAnimationFrame(frame);
+    };
+  }, []);
 
   // Keep the page from scrolling under the fixed scene, except on results.
   useEffect(() => {
@@ -57,34 +77,32 @@ export default function Game() {
 
   const total = daily.prompts.length;
   const last = g.results[g.results.length - 1];
-  const underwater = phase === "play" || phase === "reveal" || descending;
+  // A deep tier is a long plunge, a weak answer a quick dip.
+  const dropping = phase === "flash" && last;
+  const sink = dropping ? sinkMs(last) : SINK_MS;
+  const ease = dropping ? sinkEase(last) : SINK_EASE;
+  const underwater = phase === "play" || phase === "flash" || phase === "done" || descending;
 
   return (
     <main>
-      <Scene mode={underwater ? "dive" : "surface"} depth={g.depth} />
+      <Scene mode={underwater ? "dive" : "surface"} depth={g.depth} ping={g.idx} sink={sink} ease={ease} />
+      {descending && <BubbleRush />}
 
       {phase === "intro" && (
         <IntroScreen
           daily={daily}
-          nickname={g.nickname}
-          college={g.college}
           leaving={descending}
-          onProfile={g.setProfile}
           onBegin={begin}
         />
       )}
 
-      {(phase === "play" || phase === "reveal") && (
+      {(phase === "play" || phase === "flash") && <Hud answered={g.results.length} total={total} current={g.idx} depth={g.depth} zone={g.zone?.name ?? ""} sink={sink} />}
+
+      {phase === "flash" && g.results.length > 0 && (
         <>
-          <DepthRuler depth={g.depth} zones={daily.zones} />
-          <Hud
-            depth={g.depth}
-            zone={g.zone?.name ?? ""}
-            score={g.score}
-            results={g.results}
-            total={total}
-            current={phase === "play" ? g.idx : g.idx - 1}
-          />
+          {/* The drop: bubbles stream past in proportion to how far this answer sank you */}
+          <BubbleRush key={g.idx} count={Math.round(last.points / 2)} ms={sink} />
+          <Flash result={last} />
         </>
       )}
 
@@ -100,8 +118,6 @@ export default function Game() {
         />
       )}
 
-      {phase === "reveal" && last && <RevealScreen result={last} last={g.idx >= total} mpp={g.mpp} onNext={g.next} />}
-
       {phase === "done" && (
         <ResultsScreen
           daily={daily}
@@ -110,12 +126,12 @@ export default function Game() {
           depth={g.depth}
           mpp={g.mpp}
           finish={g.finish}
-          board={g.board}
           sonarLost={g.sonarLost}
           onRetry={g.retrySonar}
-          nickname={g.nickname}
         />
       )}
+
+      {process.env.NODE_ENV === "development" && <DevReset day={daily.day} />}
     </main>
   );
 }

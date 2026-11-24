@@ -27,6 +27,14 @@ MODELS = os.environ.get(
 ).split(",")
 MIN_ANSWERS = 15
 GOLDEN_MIN_INDEX = 3
+# The golden answer must sit in the last part of the list, past this fraction of it.
+GOLDEN_MIN_FRACTION = 2 / 3
+# Every prompt must name UofT or one of its places, so nothing drifts into general trivia.
+UOFT_ANCHORS = (
+    "uoft", "u of t", "university of toronto", "st. george", "st george", "utm", "utsc", "mississauga",
+    "scarborough", "varsity", "robarts", "hart house", "sid smith", "bahen", "con hall", "convocation hall",
+    "skule", "arts & sci", "arts and sci", "first-year", "frosh", "college",
+)
 ATTEMPTS = 3
 # Free models took 2-6 minutes per set in testing.
 REQUEST_TIMEOUT_SECONDS = 420
@@ -57,15 +65,18 @@ class GenSet(BaseModel):
 
 
 INSTRUCTIONS = f"""\
-You write the daily prompt set for Rarest Blue, a trivia game for University of Toronto students.
+You write the daily prompt set for UofT Krillion, a trivia game for University of Toronto students.
 Players get a prompt like "Name a St. George college" and type any valid answer. The fewer
 players who give the same answer, the more points they score, so every prompt needs a
 large, complete, factually accurate list of valid answers.
 
 Write exactly {game.PROMPTS_PER_DAY} prompts. Rules:
-- Every prompt is about UofT or student life around it (campuses, buildings, courses, clubs,
-  traditions, alumni, nearby Toronto spots, transit...). Tag each with a `category`; at most
-  {MAX_PER_CATEGORY} prompts may share one. Buildings, residences and streets are all "places".
+- Niche is the point. Every prompt must be something only a UofT student or alum would know:
+  campuses, buildings, course codes, clubs, traditions, residences, campus food, alumni, profs,
+  slang. No general Toronto, Canada or world trivia, and no broad categories anyone could answer
+  ("Name a Canadian university", "Name a sport"). The prompt text must name UofT or a UofT place.
+- Tag each prompt with a `category`; at most {MAX_PER_CATEGORY} prompts may share one.
+  Buildings, residences and streets are all "places".
 - Only use prompts with a closed, verifiable set of answers. Every answer must be real; never
   invent one. Prefer fewer answers over doubtful ones.
 - Each prompt needs at least {MIN_ANSWERS} answers, ideally 20 or more, listed from most to
@@ -75,13 +86,13 @@ Write exactly {game.PROMPTS_PER_DAY} prompts. Rules:
 - `name` is the canonical display name. `aliases` are other spellings, abbreviations and
   nicknames students would actually type: short forms ("Sid Smith"), codes, old names.
   Aliases must not overlap between answers.
-- `golden` is one hidden deep-cut answer copied exactly from a `name`, at position
-  {GOLDEN_MIN_INDEX + 1} or later in the list.
+- `golden` is one hidden deep-cut answer copied exactly from a `name`, from the last third of
+  the list: something real that almost nobody will think of.
 - `hint` is one short, playful line nudging players away from the obvious answers.
 - `id` is a short snake_case slug for the prompt.
 - `decoys` are about as many WRONG answers as there are right ones: real, plausible things that
-  don't fit the prompt (near-misses, other campuses, other cities). They pad the autocomplete
-  list so it doesn't reveal the answers, so none of them may be a valid answer.
+  don't fit the prompt (near-misses, other campuses, other cities). The game recognizes them as
+  wrong guesses, so none of them may be a valid answer.
 """
 
 
@@ -150,8 +161,10 @@ def clean_prompt(gen: GenPrompt) -> Prompt:
     golden = next((n for n in canon if game.normalize(n) == game.normalize(gen.golden)), None)
     if golden is None:
         raise ValueError(f"{gen.id}: golden '{gen.golden}' isn't an answer")
-    if canon.index(golden) < GOLDEN_MIN_INDEX:
+    if canon.index(golden) < max(GOLDEN_MIN_INDEX, int(len(canon) * GOLDEN_MIN_FRACTION)):
         raise ValueError(f"{gen.id}: golden '{golden}' is too obvious")
+    if not any(a in text.lower() for a in UOFT_ANCHORS):
+        raise ValueError(f"{gen.id}: '{text}' doesn't name UofT or a UofT place")
 
     prompt = Prompt(id=_slug(gen.id) or _slug(text), text=text, hint=hint, golden=golden, answers=answers)
     # A "decoy" that matches a real answer would score, so drop those.
@@ -179,7 +192,7 @@ def clean_set(gen: GenSet) -> list[Prompt]:
 def ask_llm(request: str, model: str) -> GenSet:
     response = httpx.post(
         OPENROUTER_URL,
-        headers={"Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}", "X-Title": "Rarest Blue"},
+        headers={"Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}", "X-Title": "UofT Krillion"},
         json={
             "model": model,
             "messages": [{"role": "user", "content": request}],

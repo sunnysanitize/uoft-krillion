@@ -1,10 +1,11 @@
-# Rarest Blue
+# UofT Krillion
 
-A daily trivia game for UofT students, played as an ocean dive. You get 7 UofT prompts with 20 seconds each.
+A daily trivia game for UofT students, played as an ocean dive. You get 7 UofT prompts with 25 seconds each.
 Any valid answer counts, and **the fewer people who gave your answer, the deeper you sink.**
 Each point is 10 m, and the depth zones go from Philosopher's Walk Shallows down to The Steam Tunnels.
-Every prompt also hides one **Golden Krill** answer that's worth a +1,000 m bonus.
-Pick your college and see how it ranks against the others on the daily standings.
+Answers score by rarity: Common 10, Uncommon 30, Rare 60, Deep Cut 85. Every prompt also hides one
+**One in a Krillion** answer worth 100.
+See how deep you went against everyone else on the daily standings.
 
 Fan-made. Not affiliated with the University of Toronto.
 

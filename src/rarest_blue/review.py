@@ -78,7 +78,7 @@ def accept(conn, day: date, prompt_id: str, guess: str, as_answer: str | None = 
     total = sum(counts.values())
     for player_id, answer in fixed.items():
         share = counts[answer] / total
-        points = game.score(share) + (game.GOLDEN_BONUS if answer == prompt.golden else 0)
+        points = game.score(share, answer == prompt.golden)
         conn.execute(
             "UPDATE guesses SET points = %s, share = %s WHERE day = %s AND prompt_id = %s AND player_id = %s",
             (points, share, key, prompt_id, player_id),

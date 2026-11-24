@@ -1,53 +1,73 @@
-import type { GuessResult } from "./api";
+import type { GuessResult, Rarity } from "./api";
 
 /** Visual tier of a single answer. Drives colour everywhere a result is shown. */
-export type Tone = "golden" | "legendary" | "rare" | "uncommon" | "common" | "basic" | "miss";
+export type Tone = "golden" | "deepcut" | "rare" | "uncommon" | "common" | "miss";
+
+const TONE_OF: Record<Rarity, Tone> = {
+  "One in a Krillion": "golden",
+  "Deep Cut": "deepcut",
+  Rare: "rare",
+  Uncommon: "uncommon",
+  Common: "common",
+};
+
+export const toneOfRarity = (rarity: Rarity): Tone => TONE_OF[rarity] ?? "common";
 
 export function toneOf(r: GuessResult): Tone {
   if (r.golden) return "golden";
   if (!r.valid || !r.rarity) return "miss";
-  return r.rarity.toLowerCase() as Tone;
+  return TONE_OF[r.rarity] ?? "common";
 }
 
 // Full class strings so Tailwind can see them at build time.
 export const TONE_TEXT: Record<Tone, string> = {
   golden: "text-gold",
-  legendary: "text-gold",
-  rare: "text-sonar",
-  uncommon: "text-foam",
-  common: "text-mist",
-  basic: "text-slate",
-  miss: "text-coral",
+  deepcut: "text-deep",
+  rare: "text-rare",
+  uncommon: "text-perch",
+  common: "text-alewife",
+  miss: "text-slate",
 };
 
 export const TONE_BG: Record<Tone, string> = {
   golden: "bg-gold",
-  legendary: "bg-gold",
-  rare: "bg-sonar",
-  uncommon: "bg-foam",
-  common: "bg-mist",
-  basic: "bg-slate",
-  miss: "bg-coral",
+  deepcut: "bg-deep",
+  rare: "bg-rare",
+  uncommon: "bg-perch",
+  common: "bg-alewife",
+  miss: "bg-slate",
 };
 
-// Rarity tiers in campus terms, shallowest to deepest.
 export const TONE_LABEL: Record<Tone, string> = {
-  golden: "Golden Krill",
-  legendary: "Tenured",
-  rare: "Grad student",
-  uncommon: "Upper-year",
-  common: "Commuter",
-  basic: "Frosh",
-  miss: "Nothing landed",
+  golden: "One in a Krillion",
+  deepcut: "Deep Cut",
+  rare: "Rare",
+  uncommon: "Uncommon",
+  common: "Common",
+  miss: "Out of air",
+};
+
+// How far each tier sinks you, in metres. It climbs steeply so the deep tiers really plunge:
+// a Deep Cut goes far deeper than a Rare, and One in a Krillion further still. Points are separate.
+const DROP_M: Record<Tone, number> = { miss: 0, common: 100, uncommon: 300, rare: 700, deepcut: 1500, golden: 2500 };
+export const dropOf = (r: GuessResult) => DROP_M[toneOf(r)];
+
+/** The creature each tier lands you, with its sprite in /public/fish. */
+export const CREATURE: Record<Tone, { name: string; src: string } | null> = {
+  common: { name: "Lake Ontario Alewife", src: "/fish/alewife.png" },
+  uncommon: { name: "Toronto Perch", src: "/fish/perch.png" },
+  rare: { name: "Lake Sturgeon", src: "/fish/sturgeon.png" },
+  deepcut: { name: "Abyssal Anglerfish", src: "/fish/anglerfish.png" },
+  golden: { name: "Legendary Varsity Krill", src: "/fish/krill.png" },
+  miss: null,
 };
 
 export const TONE_LINE: Record<Tone, string> = {
-  golden: "The one answer hidden at the bottom. Huge bonus.",
-  legendary: "Almost nobody thought of that.",
-  rare: "Deep in the stacks. Nice.",
-  uncommon: "You have been around campus.",
-  common: "Plenty of company on this one.",
-  basic: "The answer everyone in Sid Smith blurts out.",
+  golden: "The one answer hidden at the bottom.",
+  deepcut: "Deep in the stacks. Nice.",
+  rare: "You have been around campus.",
+  uncommon: "Plenty of company on this one.",
+  common: "The answer everyone in Sid Smith blurts out.",
   miss: "Not on the list.",
 };
 
@@ -57,21 +77,20 @@ export const ZONE_LINE: Record<string, string> = {
   "Sid Smith Drop-off": "Past the first-year crowds.",
   "Bahen Trench": "Where the all-nighters live.",
   "Robarts Abyss": "Down in the concrete peacock. Respect.",
-  "The Steam Tunnels": "Nobody comes down here. Legendary.",
+  "The Steam Tunnels": "Nobody comes down here.",
 };
 
-/** Best possible day: every prompt at full rarity plus its Golden Krill (server: 100 + 100 per prompt). */
-export const maxScore = (prompts: number) => prompts * 200;
+/** Best possible day: the One in a Krillion answer on every prompt (server: GOLDEN_POINTS = 100). */
+export const maxScore = (prompts: number) => prompts * 100;
 
 // The share grid goes to group chats, where emoji are the lingua franca.
 const SHARE_GLYPH: Record<Tone, string> = {
   golden: "🦐",
-  legendary: "🟨",
-  rare: "🟦",
+  deepcut: "🟪",
+  rare: "🟥",
   uncommon: "🟩",
   common: "⬜",
-  basic: "⬛",
-  miss: "🟥",
+  miss: "⬛",
 };
 
 export const shareGlyph = (r: GuessResult) => SHARE_GLYPH[toneOf(r)];
@@ -96,6 +115,17 @@ export function persist(key: string, value: unknown) {
   try {
     localStorage.setItem(key, JSON.stringify(value));
   } catch {}
+}
+
+const ADJECTIVES = ["Swift", "Quiet", "Brave", "Sleepy", "Lucky", "Curious", "Salty", "Sly", "Bold", "Misty", "Gloomy", "Zippy"];
+const CREATURES = ["Lanternfish", "Anglerfish", "Octopus", "Squid", "Seahorse", "Narwhal", "Otter", "Nautilus", "Jellyfish", "Eel", "Manta", "Goose"];
+
+/** A random leaderboard name, picked once and kept, since players don't type one. */
+export function diverName(): string {
+  const pick = (list: string[]) => list[Math.floor(Math.random() * list.length)];
+  const name = `${pick(ADJECTIVES)} ${pick(CREATURES)}`;
+  persist("rb:nickname", name);
+  return name;
 }
 
 export function playerId(): string {

@@ -6,8 +6,8 @@ const pixel = Pixelify_Sans({ subsets: ["latin"], weight: ["400", "500", "700"],
 const mono = IBM_Plex_Mono({ subsets: ["latin"], weight: ["400", "500", "600"], variable: "--font-plex" });
 
 export const metadata: Metadata = {
-  title: "KrillionTO · Deeper dive into UofT",
-  description: "KrillionTO: a daily UofT trivia dive. Deeper dive into UofT. Rarer answers sink deeper.",
+  title: "UofT Krillion · Deeper dive into UofT",
+  description: "UofT Krillion: a daily UofT trivia dive. Rarer answers sink deeper.",
 };
 
 export const viewport: Viewport = { themeColor: "#040a16" };

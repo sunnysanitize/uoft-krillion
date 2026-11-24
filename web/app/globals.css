@@ -1,9 +1,9 @@
 @import "tailwindcss";
 
 /*
- * KrillionTO design tokens.
+ * UofT Krillion design tokens.
  * Navy and light blue are the UofT brand blues; gold is reserved for the
- * Golden Krill and Legendary answers so it keeps its meaning.
+ * One in a Krillion answer so it keeps its meaning.
  * Rarity reads as a brightness ramp: slate -> mist -> foam -> sonar -> gold.
  */
 @theme {
@@ -20,6 +20,15 @@
   --color-lightblue: #007fa3;
   --color-gold: #e8b84a;
   --color-coral: #e5675f;
+
+  /* Tier colours: Common alewife silver, Uncommon perch teal + yellow, Rare red,
+     Deep Cut dark purple (with anglerfish neon cyan), One in a Krillion UofT blue + white + gold. */
+  --color-alewife: #c4ccd8;
+  --color-perch: #3cc6b4;
+  --color-perch-fin: #f2d13a;
+  --color-rare: #ea4a4f;
+  --color-deep: #6f2fd0;
+  --color-neon: #2ce8ff;
 
   --font-pixel: var(--font-pixelify), ui-monospace, monospace;
   --font-mono: var(--font-plex), ui-monospace, monospace;
@@ -46,6 +55,171 @@
   @keyframes bob {
     50% { transform: translateY(-4px); }
   }
+
+  /* Ambient scene motion: smooth easing, unlike the stepped UI beats above. */
+  --animate-twinkle: twinkle 4s ease-in-out infinite;
+  --animate-drift: drift 140s linear infinite;
+  --animate-flap: flap 1.6s steps(2, end) infinite;
+  --animate-jelly: jelly 6s ease-in-out infinite;
+  --animate-bell: bell 6s ease-in-out infinite;
+  --animate-vent: vent 3.6s ease-in infinite;
+  --animate-swim: swim 45s linear infinite;
+  --animate-float: float 3.2s ease-in-out infinite;
+  /* Home screen text and buttons ride the swell: slow, small, each line out of step. */
+  --animate-drift-y: drift-y 5.5s ease-in-out infinite;
+  --animate-letter: letter 2.4s ease-in-out infinite;
+  --animate-roll: roll 11s ease-in-out infinite;
+  --animate-slam: slam 0.75s cubic-bezier(.2,1.35,.35,1) both;
+  --animate-breathe: breathe 2.6s ease-in-out infinite;
+  --animate-sway: sway 5s ease-in-out infinite;
+  --animate-rise: rise 6s ease-in infinite;
+  --animate-ping-ring: ping-ring 1.4s cubic-bezier(.2,.6,.3,1) both;
+  --animate-fadein: fadein 0.7s ease-out both;
+  --animate-shake: shake 0.35s steps(6, end) both;
+  --animate-flash: flash 1.5s cubic-bezier(.2,.7,.3,1) both;
+  --animate-wash: wash 1.5s ease-out both;
+  --animate-ring: ring 2s cubic-bezier(.15,.6,.3,1) both;
+  --animate-burst: burst 2s cubic-bezier(.1,.7,.3,1) both;
+  --animate-rays: rays 2.2s ease-out both;
+  --animate-jolt: jolt 0.6s ease-out both;
+  --animate-count: count 0.7s cubic-bezier(.3,1.6,.5,1) 0.5s both;
+  --animate-krill-spin: krill-spin 2s cubic-bezier(.2,1.3,.4,1) both;
+  --animate-swim-in: swim-in 1.6s cubic-bezier(.25,1.1,.4,1) both;
+
+  @keyframes twinkle {
+    50% { opacity: 0.15; }
+  }
+  /* A jellyfish's stroke: a quick squeeze lifts it, then it drifts back down. */
+  @keyframes jelly {
+    0%, 100% { transform: translate3d(0, 0, 0); }
+    25% { transform: translate3d(2px, -22px, 0); }
+  }
+  @keyframes bell {
+    0%, 30%, 100% { transform: scale(1, 1); }
+    12% { transform: scale(0.88, 0.8); }
+  }
+  @keyframes vent {
+    from { transform: translate3d(0, 0, 0); opacity: 0; }
+    15% { opacity: 0.9; }
+    to { transform: translate3d(5px, -280px, 0); opacity: 0; }
+  }
+  @keyframes flap {
+    50% { transform: scaleY(-0.6); }
+  }
+  @keyframes drift {
+    from { transform: translateX(-20vw); }
+    to { transform: translateX(120vw); }
+  }
+
+  @keyframes swim {
+    from { transform: translateX(-20vw); }
+    to { transform: translateX(120vw); }
+  }
+  @keyframes float {
+    50% { transform: translateY(-5px); }
+  }
+  @keyframes drift-y {
+    0%, 100% { transform: translateY(0) rotate(0deg); }
+    30% { transform: translateY(-5px) rotate(-0.4deg); }
+    70% { transform: translateY(4px) rotate(0.35deg); }
+  }
+  @keyframes letter {
+    0%, 100% { transform: translateY(0) rotate(0deg); }
+    50% { transform: translateY(-5px) rotate(-1deg); }
+  }
+  /* Scaled up a touch so the rolling edges never show. */
+  @keyframes roll {
+    0%, 100% { transform: scale(1.03) rotate(-0.5deg) translateY(0); }
+    50% { transform: scale(1.03) rotate(0.5deg) translateY(-4px); }
+  }
+  @keyframes slam {
+    0% { opacity: 0; transform: translateY(50px) scale(0.92) rotate(-1deg); filter: blur(5px); }
+    60% { opacity: 1; filter: blur(0); }
+    100% { transform: none; }
+  }
+  @keyframes breathe {
+    0%, 100% { box-shadow: 4px 4px 0 0 #02060f, 0 0 0 0 rgba(63, 180, 216, 0); }
+    50% { box-shadow: 4px 4px 0 0 #02060f, 0 0 34px 6px rgba(63, 180, 216, 0.55); }
+  }
+  /* Home screen pieces spring up out of the water, then keep riding the swell. */
+  @keyframes rise-in {
+    from { opacity: 0; translate: 0 36px; scale: 0.95; filter: blur(4px); }
+  }
+  @keyframes rush {
+    from { transform: translate3d(0, 0, 0); opacity: 0; }
+    15% { opacity: 0.9; }
+    to { transform: translate3d(0, -130vh, 0); opacity: 0; }
+  }
+  @keyframes sway {
+    0%, 100% { transform: rotate(-4deg); }
+    50% { transform: rotate(4deg); }
+  }
+  @keyframes rise {
+    from { transform: translate3d(0, 0, 0); opacity: 0.8; }
+    to { transform: translate3d(6px, -38vh, 0); opacity: 0; }
+  }
+  @keyframes ping-ring {
+    from { transform: translate(-50%, -50%) scale(0.6); opacity: 0.9; }
+    to { transform: translate(-50%, -50%) scale(5); opacity: 0; }
+  }
+  @keyframes fadein {
+    from { opacity: 0; }
+  }
+  @keyframes shake {
+    20%, 60% { transform: translateX(-6px); }
+    40%, 80% { transform: translateX(6px); }
+  }
+  @keyframes wash {
+    0% { opacity: 0; }
+    15% { opacity: 1; }
+    75% { opacity: 1; }
+    100% { opacity: 0; }
+  }
+  /* Rings centre on their anchor, swell and fade like a sonar return. */
+  @keyframes ring {
+    from { transform: translate(-50%, -50%) scale(0.3); opacity: 0.9; }
+    to { transform: translate(-50%, -50%) scale(4.5); opacity: 0; }
+  }
+  /* Particles fly out to (--dx, --dy), then drift up as they fade. */
+  @keyframes burst {
+    0% { transform: translate(-50%, -50%) scale(0.4); opacity: 0; }
+    15% { opacity: 1; }
+    70% { transform: translate(calc(var(--dx) - 50%), calc(var(--dy) - 50%)) scale(1); opacity: 0.9; }
+    100% { transform: translate(calc(var(--dx) - 50%), calc(var(--dy) - 50% - 24px)) scale(0.6); opacity: 0; }
+  }
+  @keyframes rays {
+    0% { opacity: 0; transform: translate(-50%, -50%) rotate(0deg) scale(0.6); }
+    20% { opacity: 1; }
+    80% { opacity: 1; }
+    100% { opacity: 0; transform: translate(-50%, -50%) rotate(40deg) scale(1); }
+  }
+  /* A short thud for the big tiers, like the camera taking a hit. */
+  @keyframes jolt {
+    0%, 100% { transform: none; }
+    25% { transform: translate(0, 3px); }
+    55% { transform: translate(0, -1px); }
+  }
+  @keyframes count {
+    from { opacity: 0; transform: translateY(8px) scale(0.6); }
+  }
+  /* The tier's creature darts in from the left and settles with a wiggle. */
+  @keyframes swim-in {
+    0% { opacity: 0; transform: translateX(-45vw) rotate(-6deg); }
+    70% { opacity: 1; transform: translateX(10px) rotate(3deg); }
+    85% { transform: translateX(-4px) rotate(-1deg); }
+    100% { transform: none; }
+  }
+  @keyframes krill-spin {
+    from { opacity: 0; transform: scale(0.2) rotate(-200deg); }
+  }
+
+  /* The between-prompt verdict: pop in, hold, then lift away. */
+  @keyframes flash {
+    0% { opacity: 0; transform: translateY(10px) scale(0.92); }
+    12% { opacity: 1; transform: none; }
+    85% { opacity: 1; transform: none; }
+    100% { opacity: 0; transform: translateY(-14px); }
+  }
 }
 
 @layer base {
@@ -64,6 +238,31 @@
   /* The krill sprite has a navy outline; a 1px light edge keeps it readable on dark water. */
   img.sprite { filter: drop-shadow(1px 0 0 #cfe6f5) drop-shadow(-1px 0 0 #cfe6f5) drop-shadow(0 1px 0 #cfe6f5) drop-shadow(0 -1px 0 #cfe6f5); }
 }
+
+/* Pointer-driven depth: --px/--py run -1..1, set from the page. Near layers swing furthest. */
+:root { --px: 0; --py: 0; }
+/* Each layer keeps the camera's sink (transform, 1.8s) and fades (opacity) alongside the pointer
+   parallax (translate); declaring only `translate` here would make the sink snap instead of glide. */
+.parallax-far, .parallax-mid, .parallax-near {
+  transition: transform var(--sink, 1.8s) var(--sink-ease, cubic-bezier(.45, .05, .2, 1)), opacity 1s ease, translate var(--parallax-ease, 0.6s) ease-out;
+}
+.parallax-far { translate: calc(var(--px) * -6px) calc(var(--py) * -3px); --parallax-ease: 0.8s; }
+.parallax-mid { translate: calc(var(--px) * -14px) calc(var(--py) * -6px); --parallax-ease: 0.6s; }
+.parallax-near { translate: calc(var(--px) * -26px) calc(var(--py) * -10px); --parallax-ease: 0.4s; }
+.tilt { transform: perspective(900px) rotateY(calc(var(--px) * 3.5deg)) rotateX(calc(var(--py) * -3deg)); transition: transform 0.35s ease-out; }
+
+/* Rise in (translate/scale/filter), then float forever (transform): separate properties, so they stack. */
+.float-in {
+  animation: rise-in 1s cubic-bezier(.2, 1.25, .4, 1) both, drift-y 5.5s ease-in-out infinite;
+  animation-delay: var(--in), calc(var(--in) * -3);
+}
+.float-in-1 { --in: 0.1s; }
+.float-in-2 { --in: 0.25s; }
+.float-in-3 { --in: 0.45s; }
+.float-in-4 { --in: 0.6s; }
+.float-in-5 { --in: 0.8s; }
+.float-in-6 { --in: 0.95s; }
+.float-in-7 { --in: 1.1s; }
 
 /* CRT scanlines: one fixed layer over everything, never interactive. */
 .scanlines {

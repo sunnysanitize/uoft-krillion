@@ -1,15 +1,14 @@
 import type { GuessResult } from "../lib/api";
-import { TONE_LABEL, toneOf, type Tone } from "../lib/game";
+import { dropOf, TONE_LABEL, toneOf, type Tone } from "../lib/game";
 
 // SVG fills need raw values; these mirror the tone tokens in globals.css.
 const FILL: Record<Tone, string> = {
   golden: "var(--color-gold)",
-  legendary: "var(--color-gold)",
-  rare: "var(--color-sonar)",
-  uncommon: "var(--color-foam)",
-  common: "var(--color-mist)",
-  basic: "var(--color-slate)",
-  miss: "var(--color-coral)",
+  deepcut: "var(--color-deep)",
+  rare: "var(--color-rare)",
+  uncommon: "var(--color-perch)",
+  common: "var(--color-alewife)",
+  miss: "var(--color-slate)",
 };
 
 const W = 700;
@@ -17,8 +16,8 @@ const H = 220;
 const PAD = { l: 44, r: 12, t: 12, b: 28 };
 
 /** Metres gained on each prompt, drawn as drop lines from the surface. Deeper = rarer. */
-export function DiveLog({ results, mpp, prompts }: { results: GuessResult[]; mpp: number; prompts: string[] }) {
-  const gains = results.map((r) => r.points * mpp);
+export function DiveLog({ results, prompts }: { results: GuessResult[]; prompts: string[] }) {
+  const gains = results.map(dropOf);
   const top = Math.max(1000, Math.ceil(Math.max(...gains, 0) / 500) * 500);
   const x = (i: number) => PAD.l + ((i + 0.5) * (W - PAD.l - PAD.r)) / results.length;
   const y = (m: number) => PAD.t + (m / top) * (H - PAD.t - PAD.b);

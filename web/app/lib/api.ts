@@ -2,9 +2,10 @@ export type Prompt = {
   id: string;
   text: string;
   hint: string;
-  /** Every accepted answer plus decoys, alphabetized, for autocomplete. Validity can't be read from it. */
-  suggestions?: string[];
 };
+
+/** Whether a typed answer is one the game knows, whether it's right, and else a "did you mean". */
+export type CheckResult = { recognized: boolean; correct: boolean; suggestion: string | null };
 
 export type Daily = {
   day: string;
@@ -12,16 +13,18 @@ export type Daily = {
   time_limit: number;
   meters_per_point: number;
   zones: { start: number; name: string }[];
-  colleges: string[];
   prompts: Prompt[];
 };
+
+/** Rarity tiers from the server, most common first. */
+export type Rarity = "Common" | "Uncommon" | "Rare" | "Deep Cut" | "One in a Krillion";
 
 export type GuessResult = {
   valid: boolean;
   answer: string | null;
   points: number;
   share_pct: number | null;
-  rarity: "Legendary" | "Rare" | "Uncommon" | "Common" | "Basic" | null;
+  rarity: Rarity | null;
   golden: boolean;
   golden_answer: string;
   top: { answer: string; pct: number }[];
@@ -31,11 +34,13 @@ export type GuessResult = {
   raw?: string;
 };
 
+/** One row of a prompt's full answer list, shown after you've played it. */
+export type AnswerRow = { answer: string; pct: number; points: number; rarity: Rarity; golden: boolean; yours: boolean };
+
 export type FinishResult = { score: number; percentile: number; players: number };
 
 export type Leaderboard = {
-  players: { nickname: string; college: string | null; score: number }[];
-  colleges: { college: string; avg: number; n: number }[];
+  players: { nickname: string; score: number }[];
 };
 
 async function call<T>(path: string, body?: unknown): Promise<T> {
@@ -51,9 +56,13 @@ async function call<T>(path: string, body?: unknown): Promise<T> {
 
 export const api = {
   daily: () => call<Daily>("daily"),
+  check: (prompt_id: string, answer: string) => call<CheckResult>("check", { prompt_id, answer }),
   guess: (player_id: string, prompt_id: string, answer: string) =>
     call<GuessResult>("guess", { player_id, prompt_id, answer }),
-  finish: (player_id: string, nickname: string, college: string | null) =>
-    call<FinishResult>("finish", { player_id, nickname, college }),
+  answers: (player_id: string, prompt_id: string) =>
+    call<{ answers: AnswerRow[] }>("answers", { player_id, prompt_id }).then((r) => r.answers),
+  finish: (player_id: string, nickname: string) => call<FinishResult>("finish", { player_id, nickname }),
   leaderboard: () => call<Leaderboard>("leaderboard"),
+  /** Only exists when the backend runs with DEV_RESET=1 (docker compose sets it). */
+  devReset: (player_id: string) => call<{ ok: boolean }>("dev/reset", { player_id }),
 };

@@ -5,12 +5,14 @@ from rarest_blue.domain import rules
 
 
 def gen_prompt(
-    pid: str, n: int = generation.MIN_ANSWERS + 2, golden_at: int = -2, category: str = "places"
+    pid: str, n: int = generation.MIN_ANSWERS + 2, golden_at: int = -2, category: str = "places", kind: str = "closed"
 ) -> generation.GenPrompt:
     answers = [generation.GenAnswer(name=f"Answer {pid} {i}", aliases=[f"alias {pid} {i}"], why="") for i in range(n)]
     return generation.GenPrompt(
         id=pid,
         category=category,
+        kind=kind,
+        set_size=0,
         text=f"Name a UofT {pid}",
         hint="Go deep.",
         golden=answers[golden_at].name,
@@ -28,14 +30,36 @@ def gen_set() -> generation.GenSet:
     )
 
 
-def verdict(pid: str, **kw) -> generation.Verdict:
+def addition(name: str, aliases: tuple[str, ...] = ()) -> generation.GenAnswer:
+    return generation.GenAnswer(name=name, aliases=list(aliases), why="It's real.")
+
+
+def verdict(
+    gen: generation.GenPrompt,
+    invalid: tuple[str, ...] = (),
+    defensible: tuple[str, ...] = (),
+    missing: tuple[generation.GenAnswer, ...] = (),
+    **kw,
+) -> generation.Verdict:
+    """A verdict that checks every answer and decoy of `gen`: valid and wrong, except the ones named."""
     return generation.Verdict(
-        **{"id": pid, "ambiguous": False, "problem": "", "wrong_answers": [], "right_decoys": [], **kw}
+        **{
+            "id": gen.id,
+            "kind": gen.kind,
+            "answers": [
+                generation.AnswerCheck(name=a.name, valid=a.name not in invalid, more_aliases=[]) for a in gen.answers
+            ],
+            "decoys": [generation.DecoyCheck(decoy=d, defensible=d in defensible) for d in gen.decoys],
+            "missing_answers": list(missing),
+            "ambiguous": False,
+            "problem": "",
+            **kw,
+        }
     )
 
 
 def all_clear(gen: generation.GenSet) -> generation.Verdicts:
-    return generation.Verdicts(prompts=[verdict(p.id) for p in gen.prompts])
+    return generation.Verdicts(prompts=[verdict(p) for p in gen.prompts])
 
 
 class FakeWriter:

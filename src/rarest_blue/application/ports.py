@@ -21,7 +21,9 @@ class PromptRepository(Protocol):
 
     def replace_prompt(self, day: date, prompt: Prompt) -> None: ...
 
-    def recent_texts(self, before: date, days: int) -> list[str]: ...
+    def recent(self, before: date, days: int) -> list[Prompt]:
+        """Every prompt from the `days` stored sets before `before`."""
+        ...
 
 
 class GuessRepository(Protocol):
@@ -87,8 +89,8 @@ Clock = Callable[[], date]
 
 
 class PromptWriter(Protocol):
-    """Something that writes a prompt set from instructions: in production, an LLM."""
+    """Something that answers instructions with JSON: in production, an LLM. Writes prompt sets and fact-checks them."""
 
-    def write(self, request: str, model: str, response_schema: dict) -> str:
+    def write(self, request: str, model: str, response_schema: dict, temperature: float) -> str:
         """Returns the raw JSON text of the reply."""
         ...

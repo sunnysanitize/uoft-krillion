@@ -16,13 +16,13 @@ def test_generator_stores_tomorrow_once(database, uow):
     assert [p.id for p in stored] == [f"topic{i}" for i in range(rules.PROMPTS_PER_DAY)]
 
     assert generate_cli.main([], settings=database, writer=writer) == 0  # second run is a no-op
-    assert len(writer.models) == 1
+    assert writer.models == [database.generator_model, database.verifier_model]
 
 
 def test_generator_retries_then_fails(database):
     writer = FakeWriter(error=ValueError("bad json"))
     assert generate_cli.main([], settings=database, writer=writer) == 1
-    assert writer.models == ["model-a", "model-b", "model-a"]
+    assert writer.models == [database.generator_model] * 3
 
 
 def test_accepting_a_missed_answer_rescores(client, uow):

@@ -1,4 +1,4 @@
-"""Nightly job: have an LLM write tomorrow's prompt set and store it.
+"""Nightly job: have an LLM write tomorrow's prompt set, fact-check it with a second LLM, and store it.
 
     python -m rarest_blue.entrypoints.cli.generate [--day YYYY-MM-DD] [--dry-run]
 
@@ -33,7 +33,9 @@ def main(argv: list[str] | None = None, settings: Settings | None = None, writer
     day = args.day or days.today() + timedelta(days=1)
 
     postgres.init_schema(settings.database_url)
-    generator = PromptSetGenerator(writer or OpenRouterWriter(settings.openrouter_api_key), settings.openrouter_models)
+    generator = PromptSetGenerator(
+        writer or OpenRouterWriter(settings.openrouter_api_key), settings.generator_model, settings.verifier_model
+    )
     try:
         result = run_nightly(lambda: postgres.PostgresUnitOfWork(settings.database_url), generator, day, args.dry_run)
     except GenerationFailed as e:

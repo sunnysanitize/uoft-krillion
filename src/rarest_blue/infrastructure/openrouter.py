@@ -5,7 +5,6 @@ from __future__ import annotations
 import httpx
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-# Free models took 2-6 minutes per set in testing.
 REQUEST_TIMEOUT_SECONDS = 420
 
 
@@ -15,7 +14,7 @@ class OpenRouterWriter:
         self._url = url
         self._timeout = timeout
 
-    def write(self, request: str, model: str, response_schema: dict) -> str:
+    def write(self, request: str, model: str, response_schema: dict, temperature: float) -> str:
         # Checked per call, not at startup, so a run that finds the day already stored needs no key.
         if not self._api_key:
             raise ValueError("OPENROUTER_API_KEY is not set")
@@ -25,9 +24,10 @@ class OpenRouterWriter:
             json={
                 "model": model,
                 "messages": [{"role": "user", "content": request}],
+                "temperature": temperature,
                 "response_format": {
                     "type": "json_schema",
-                    "json_schema": {"name": "prompt_set", "strict": True, "schema": response_schema},
+                    "json_schema": {"name": "reply", "strict": True, "schema": response_schema},
                 },
             },
             timeout=self._timeout,

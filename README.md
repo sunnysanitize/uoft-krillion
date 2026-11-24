@@ -58,10 +58,26 @@ Don't point it at your dev database. With compose, run `docker compose exec db c
 
 ## Daily prompts
 
-Each night at 23:30 Toronto time, `python -m rarest_blue.entrypoints.cli.generate` asks an LLM on OpenRouter for tomorrow's 7 prompts.
-It checks them (enough answers, no colliding aliases, a real deep-cut golden answer, decoys that don't accidentally
-match a real answer), retries up to 3 times (cycling through `OPENROUTER_MODELS`), and
-stores the set in the `daily_prompts` table. At midnight the API serves the new day's row. Nothing gets redeployed.
+Each night at 23:30 Toronto time, `python -m rarest_blue.entrypoints.cli.generate` builds tomorrow's 7 prompts in two LLM
+passes on OpenRouter:
+
+1. **Generator** (`google/gemini-3.6-flash`) writes 12 candidate prompts with at least 20 answers each. Each has accepted answers, aliases, a
+   one-line explanation per answer, a golden answer, and decoys.
+2. **Verifier** (`openai/gpt-5.4-mini`, a different model family) checks every candidate on its own. It drops
+   ambiguous prompts and wrong answers. A decoy that turns out to be a valid answer becomes a rare answer.
+
+The code then checks what's left (enough answers, no colliding aliases, a real deep-cut golden answer, decoys that
+don't accidentally match a real answer) and picks the first 7 that pass, with at most 2 per category.
+If too few survive, it retries the whole thing up to 3 times. The set goes into the `daily_prompts` table, and at
+midnight the API serves the new day's row. Nothing gets redeployed.
+
+To keep each day different:
+
+- The generator sees every prompt from the last 60 stored days and is told not to repeat or reword them.
+- The code also enforces this. It drops any candidate whose answer list overlaps a recent prompt's by 50% or more,
+  however the question is worded.
+- Each date picks two categories for the generator to lean toward, so different days start from different places.
+- The generator runs at temperature 1 and the verifier at 0.
 
 If a day has no stored set when its first request arrives, the API stores and serves a set from the built-in bank in
 `domain/prompt_bank.py`. The day's set never changes once it's been served, except through the review tool below.
@@ -98,8 +114,8 @@ obvious golden answers.
 - `API_URL` (web): sets the backend URL. The default is `http://localhost:8000`.
 - `DATABASE_URL` (src): the Postgres connection string. For Supabase, use the **transaction pooler** URL.
 - `OPENROUTER_API_KEY` (src, generator only): the OpenRouter API key.
-- `OPENROUTER_MODELS` (src, generator only): comma-separated models to try in order. The default is three free
-  models, led by `particle-ai/particle-1:free`. To switch to a paid model later, set something like `google/gemini-...`.
+- `GENERATOR_MODEL` (src, generator only): the OpenRouter model that writes prompts. The default is `google/gemini-3.6-flash`.
+- `VERIFIER_MODEL` (src, generator only): the OpenRouter model that fact-checks them. The default is `openai/gpt-5.4-mini`.
 - `CORS_ORIGINS` (src): a comma-separated list of allowed origins.
 
 ## Deploy (Cloud Run + Supabase)

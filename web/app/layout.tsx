@@ -16,6 +16,13 @@ export const viewport: Viewport = { themeColor: "#040a16" };
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${pixel.variable} ${mono.variable}`}>
+      <head>
+        <script
+          async
+          src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-5618307862587087"
+          crossOrigin="anonymous"
+        />
+      </head>
       <body>
         {children}
         <div className="scanlines" aria-hidden />

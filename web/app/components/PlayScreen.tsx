@@ -1,8 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import type { Prompt } from "../lib/api";
-import { complete, norm, typoOf } from "../lib/match";
+import { useEffect, useRef, useState } from "react";
+import { api, type Prompt } from "../lib/api";
 import { TimerDial } from "./TimerDial";
 import { Label, PixelButton } from "./ui";
 
@@ -24,19 +23,17 @@ export function PlayScreen({
   onSubmit: (answer: string) => void;
 }) {
   const [answer, setAnswer] = useState("");
-  const [hi, setHi] = useState(-1); // highlighted autocomplete row
-  const [typo, setTypo] = useState<{ from: string; to: string } | null>(null);
+  const [checking, setChecking] = useState(false);
+  // After Enter: a "did you mean" to accept with Enter again, or a rejection to retype.
+  const [suggestion, setSuggestion] = useState<string | null>(null);
+  // A miss to show and shake: unrecognized, or recognized but wrong. `n` re-triggers the shake.
+  const [rejected, setRejected] = useState<{ text: string; wrong: boolean; n: number } | null>(null);
   const input = useRef<HTMLInputElement>(null);
-  // A spelling the player already saw a fix for; diving it again sends it as typed.
-  const dismissed = useRef<string | null>(null);
-  const suggestions = prompt.suggestions ?? [];
-  const options = useMemo(() => complete(answer, suggestions), [answer, suggestions]);
-  const showOptions = options.length > 0 && !(options.length === 1 && norm(options[0]) === norm(answer));
 
   useEffect(() => {
     setAnswer("");
-    setTypo(null);
-    dismissed.current = null;
+    setSuggestion(null);
+    setRejected(null);
     input.current?.focus();
   }, [prompt.id]);
 
@@ -49,134 +46,91 @@ export function PlayScreen({
     }
   }, [remaining, prompt.id, answer, onSubmit]);
 
-  function dive(text: string) {
-    if (!text.trim() || submitting) return;
-    // First submit of a near-miss spelling: offer the fix instead of spending the prompt.
-    const fix = typo || norm(text) === dismissed.current ? null : typoOf(text, suggestions);
-    if (fix) {
-      dismissed.current = norm(text);
-      setTypo({ from: text, to: fix });
-      setAnswer(fix);
-      return;
+  // Only recognized answers spend the prompt; anything else gets a suggestion or a retry.
+  // Only right answers spend the prompt. Wrong ones get another go until the clock runs out.
+  async function dive(typed: string) {
+    if (!typed.trim() || submitting || checking) return;
+    // Taking a "did you mean" still goes through the check, so it can't sneak a wrong answer in.
+    const text = suggestion ?? typed;
+    if (suggestion) {
+      setAnswer(suggestion);
+      setSuggestion(null);
     }
-    onSubmit(text);
-  }
-
-  function pick(s: string) {
-    setAnswer(s);
-    setHi(-1);
-    setTypo(null);
-    input.current?.focus();
-  }
-
-  function onKey(e: KeyboardEvent<HTMLInputElement>) {
-    if (!showOptions || typo) return;
-    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-      e.preventDefault();
-      // Cycle through the rows and back to the text field (-1).
-      const step = e.key === "ArrowDown" ? 1 : -1;
-      setHi((h) => {
-        const next = h + step;
-        return next >= options.length ? -1 : next < -1 ? options.length - 1 : next;
-      });
-    } else if (e.key === "Enter" && hi >= 0 && hi < options.length) {
-      e.preventDefault();
-      pick(options[hi]);
-    } else if (e.key === "Escape") {
-      setHi(-1);
+    setChecking(true);
+    try {
+      const r = await api.check(prompt.id, text);
+      if (r.correct) return onSubmit(text);
+      if (!r.recognized && r.suggestion) return setSuggestion(r.suggestion);
+      setRejected((prev) => ({ text, wrong: r.recognized, n: (prev?.n ?? 0) + 1 }));
+    } catch {
+      onSubmit(text); // can't check right now: let the server judge it
+    } finally {
+      setChecking(false);
+      input.current?.focus();
     }
   }
 
   return (
     <>
-      <div className="fixed inset-x-0 top-[22vh] z-20 flex justify-center px-4 md:pr-48 sm:top-[25vh]">
-        <section key={prompt.id} className="w-full max-w-2xl animate-surface border-2 border-line bg-trench/95 p-5 shadow-block sm:p-8">
+      <div className="fixed inset-x-0 top-[22vh] z-20 flex animate-drift-y justify-center px-4 sm:top-[25vh]">
+        <div className="tilt w-full max-w-2xl">
+        <section key={prompt.id} className="w-full animate-slam border-2 border-line bg-trench/95 p-5 shadow-block sm:p-8">
           <Label className="text-sonar">
             Prompt {index + 1} of {total}
           </Label>
           <h1 className="mt-3 text-balance font-pixel text-[clamp(1.75rem,5vw,3rem)] font-medium leading-[1.08]">{prompt.text}</h1>
           <p className="mt-4 text-sm text-mist">▼ {prompt.hint} ▼</p>
         </section>
+        </div>
       </div>
 
       <form
-        className="fixed inset-x-0 bottom-0 z-30 border-t-2 border-line bg-abyss/90 px-3 pb-4 pt-3 sm:px-5 md:pr-48"
+        className="fixed inset-x-0 bottom-0 z-30 px-3 pb-5 pt-3 sm:px-5"
         onSubmit={(e) => {
           e.preventDefault();
           dive(answer);
         }}
       >
         <div className="relative mx-auto max-w-2xl">
-          {typo && (
+          {(suggestion || rejected) && (
             <div className="absolute inset-x-0 bottom-full mb-3 flex justify-center" role="status">
-              <div className="border-2 border-line bg-trench px-4 py-2.5 text-center shadow-block">
-                <div className="text-sm">
-                  <span className="text-mist">“{typo.from}”</span> <span className="text-slate">→</span>{" "}
-                  <span className="text-sonar">“{typo.to}”</span>
+              {suggestion ? (
+                <div className="animate-surface border-2 border-sonar bg-trench px-4 py-2.5 text-center shadow-block">
+                  <div className="text-sm">
+                    <span className="text-mist">Did you mean</span> <span className="text-sonar">“{suggestion}”</span>
+                    <span className="text-mist">?</span>
+                  </div>
+                  <div className="mt-1 text-[11px] uppercase tracking-[0.2em] text-slate">Enter to dive with it · keep typing to change</div>
                 </div>
-                <div className="mt-1 flex items-center justify-center gap-2 text-[11px] uppercase tracking-[0.2em] text-slate">
-                  <span>Dive again to confirm ·</span>
-                  <button
-                    type="button"
-                    onClick={() => onSubmit(typo.from)}
-                    className="cursor-pointer uppercase tracking-[0.2em] text-mist underline underline-offset-2 hover:text-ink"
-                  >
-                    keep mine
-                  </button>
+              ) : (
+                <div key={rejected!.n} className="animate-shake border-2 border-coral bg-trench/95 px-4 py-2.5 text-center text-sm shadow-block">
+                  <span className="text-coral">“{rejected!.text}”</span>{" "}
+                  <span className="text-mist">{rejected!.wrong ? "isn’t it. Keep trying!" : "isn’t recognized. Try another."}</span>
                 </div>
-              </div>
+              )}
             </div>
           )}
 
           <div className="flex items-center gap-2 sm:gap-3">
             <TimerDial remaining={remaining} limit={limit} />
             <div className="relative min-w-0 flex-1">
-              {showOptions && !typo && (
-                <ul
-                  id="answer-options"
-                  role="listbox"
-                  className="absolute inset-x-0 bottom-full mb-2 border-2 border-line bg-trench shadow-block"
-                >
-                  {options.map((o, i) => (
-                    <li
-                      key={o}
-                      id={`answer-option-${i}`}
-                      role="option"
-                      aria-selected={i === hi}
-                      onMouseDown={(e) => {
-                        e.preventDefault();
-                        pick(o);
-                      }}
-                      className={`cursor-pointer px-4 py-2 text-sm ${i === hi ? "bg-uoft text-ink" : "text-mist hover:bg-deep hover:text-ink"}`}
-                    >
-                      {o}
-                    </li>
-                  ))}
-                </ul>
-              )}
               <label htmlFor="answer" className="sr-only">
                 Your answer
               </label>
               <input
                 id="answer"
                 ref={input}
-                role="combobox"
-                aria-expanded={showOptions}
-                aria-controls="answer-options"
-                aria-autocomplete="list"
-                aria-activedescendant={showOptions && hi >= 0 ? `answer-option-${hi}` : undefined}
-                className="w-full border-2 border-sonar/70 bg-trench px-3 py-3.5 text-base text-ink placeholder:text-slate focus:border-sonar focus:outline-none sm:px-4 sm:text-lg"
+                className="w-full border-2 border-sonar/70 bg-trench/70 px-3 py-3.5 backdrop-blur-sm text-base text-ink placeholder:text-slate focus:border-sonar focus:outline-none sm:px-4 sm:text-lg"
                 placeholder="type one answer…"
                 maxLength={80}
                 autoComplete="off"
                 autoCapitalize="off"
                 spellCheck={false}
                 value={answer}
-                onKeyDown={onKey}
                 onChange={(e) => {
                   setAnswer(e.target.value);
-                  setHi(-1);
-                  setTypo(null);
+                  setSuggestion(null);
+                  setRejected(null);
                 }}
                 disabled={submitting}
               />
@@ -188,7 +142,7 @@ export function PlayScreen({
                 />
               </div>
             </div>
-            <PixelButton disabled={submitting || !answer.trim()} className="self-start px-3.5! text-base! sm:px-7! sm:text-lg!">
+            <PixelButton disabled={submitting || checking || !answer.trim()} className="self-start px-3.5! text-base! sm:px-7! sm:text-lg!">
               Dive
             </PixelButton>
           </div>

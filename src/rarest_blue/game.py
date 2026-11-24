@@ -12,9 +12,11 @@ from .prompts import PROMPTS, Prompt
 TORONTO = ZoneInfo("America/Toronto")
 LAUNCH_DATE = date(2026, 11, 1)
 PROMPTS_PER_DAY = 7
-TIME_LIMIT_SECONDS = 20
-MAX_POINTS = 100
-GOLDEN_BONUS = 100
+TIME_LIMIT_SECONDS = 25
+# Points per rarity tier. The one hidden "One in a Krillion" answer per prompt scores a flat 100.
+TIER_POINTS = {"Common": 10, "Uncommon": 30, "Rare": 60, "Deep Cut": 85}
+GOLDEN = "One in a Krillion"
+GOLDEN_POINTS = 100
 METERS_PER_POINT = 10
 
 # Depth zones, shallowest first: (starting depth in meters, name).
@@ -34,6 +36,8 @@ _GENERIC = {
 }
 # Shortest guess that may stand in for a longer answer it starts ("Bahen" for "Bahen Centre").
 MIN_PREFIX_CHARS = 4
+# How close an unrecognized guess must be to a known name to offer "did you mean".
+SUGGEST_CUTOFF = 0.7
 
 
 def normalize(text: str) -> str:
@@ -52,7 +56,7 @@ def _alias_index(prompt: Prompt) -> dict[str, str]:
     return index
 
 
-def match_answer(prompt: Prompt, guess: str) -> str | None:
+def match_answer(prompt: Prompt, guess: str, fuzzy: bool = True) -> str | None:
     """Return the canonical answer the guess refers to, or None if invalid."""
     key = normalize(guess)
     if not key:
@@ -69,11 +73,30 @@ def match_answer(prompt: Prompt, guess: str) -> str | None:
         if len(hits) == 1:
             return hits.pop()
     # Forgive small typos on longer answers only, so "MAT" can't fuzz into "MAT137".
-    if len(key) >= 5:
+    if fuzzy and len(key) >= 5:
         close = difflib.get_close_matches(key, index.keys(), n=1, cutoff=0.85)
         if close:
             return index[close[0]]
     return None
+
+
+def recognize(prompt: Prompt, guess: str) -> tuple[bool, str | None]:
+    """Is the guess a known answer or decoy? If not, the closest known name to suggest.
+
+    Answers and decoys are treated alike, so this never reveals which is which.
+    """
+    known = Prompt(**{**prompt.__dict__, "answers": [*prompt.answers, *((d,) for d in prompt.decoys)]})
+    if match_answer(known, guess, fuzzy=False) is not None:
+        return True, None
+    key = _strip_generic(normalize(guess))
+    if len(key) < 3:
+        return False, None
+    index = _alias_index(known)
+    # Compare with generic words dropped on both sides, so "Masey College" finds "Massey College".
+    for alias, canon in list(index.items()):
+        index.setdefault(_strip_generic(alias), canon)
+    close = difflib.get_close_matches(key, index.keys(), n=1, cutoff=SUGGEST_CUTOFF)
+    return False, index[close[0]] if close else None
 
 
 def _strip_generic(key: str) -> str:
@@ -107,22 +130,22 @@ def prior_counts(prompt: Prompt) -> dict[str, int]:
     return {names[0]: max(1, round(60 / (i + 1))) for i, names in enumerate(prompt.answers)}
 
 
-def score(share: float) -> int:
-    """Points for an answer given the fraction of players who said the same thing."""
-    return max(1, round(MAX_POINTS * (1 - share) ** 2))
+def score(share: float, golden: bool = False) -> int:
+    """Points for a valid answer, from the fraction of players who said the same thing."""
+    return GOLDEN_POINTS if golden else TIER_POINTS[rarity_label(share)]
 
 
 def zone(depth_m: int) -> str:
     return [name for start, name in ZONES if depth_m >= start][-1]
 
 
-def rarity_label(share: float) -> str:
-    if share < 0.01:
-        return "Legendary"
+def rarity_label(share: float, golden: bool = False) -> str:
+    if golden:
+        return GOLDEN
     if share < 0.05:
-        return "Rare"
+        return "Deep Cut"
     if share < 0.15:
-        return "Uncommon"
+        return "Rare"
     if share < 0.35:
-        return "Common"
-    return "Basic"
+        return "Uncommon"
+    return "Common"

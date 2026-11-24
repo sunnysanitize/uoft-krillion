@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { Daily, FinishResult, GuessResult, Leaderboard } from "../lib/api";
-import { clock, maxScore, meters, msToNextDive, shareGlyph, TONE_BG, toneOf, zoneAt, ZONE_LINE } from "../lib/game";
+import { api, type AnswerRow, type Daily, type FinishResult, type GuessResult } from "../lib/api";
+import { playerId, toneOfRarity } from "../lib/game";
+import { clock, CREATURE, dropOf, maxScore, meters, msToNextDive, shareGlyph, TONE_BG, TONE_LABEL, TONE_TEXT, toneOf, zoneAt, ZONE_LINE } from "../lib/game";
 import { DiveLog } from "./DiveLog";
-import { Standings } from "./Standings";
 import { Label, PixelButton } from "./ui";
 
 export function ResultsScreen({
@@ -14,8 +14,6 @@ export function ResultsScreen({
   depth,
   mpp,
   finish,
-  board,
-  nickname,
   sonarLost,
   onRetry,
 }: {
@@ -25,8 +23,6 @@ export function ResultsScreen({
   depth: number;
   mpp: number;
   finish: FinishResult | null;
-  board: Leaderboard | null;
-  nickname: string;
   sonarLost: boolean;
   onRetry: () => void;
 }) {
@@ -43,7 +39,7 @@ export function ResultsScreen({
     return () => clearInterval(t);
   }, []);
 
-  const text = `KrillionTO No.${daily.number} · ${meters(depth)} · ${zone.name}\n${results.map(shareGlyph).join("")}\nDeeper dive into UofT`;
+  const text = `UofT Krillion No.${daily.number} · ${meters(depth)} · ${zone.name}\n${results.map(shareGlyph).join("")}\nDeeper dive into UofT`;
   const copy = () =>
     navigator.clipboard?.writeText(text).then(() => {
       setCopied(true);
@@ -51,11 +47,12 @@ export function ResultsScreen({
     });
 
   return (
-    <div className="fixed inset-0 z-20 overflow-y-auto bg-abyss/80 backdrop-blur-[2px]">
+    // Fades in once the camera has sunk to the real depth (the Scene transition is 1.8s).
+    <div className="fixed inset-0 z-20 overflow-y-auto bg-abyss/80 backdrop-blur-[2px] animate-fadein [animation-delay:1.6s]">
       <div className="mx-auto w-full max-w-3xl px-5 pb-16 pt-8 sm:pt-12">
         <header className="flex items-baseline justify-between gap-4">
           <div className="font-pixel text-2xl font-bold">
-            Krillion<span className="text-sonar">TO</span>
+            <span className="text-sonar">UofT</span> Krillion
           </div>
           <Label>Dive No.{String(daily.number).padStart(3, "0")} complete</Label>
         </header>
@@ -103,16 +100,11 @@ export function ResultsScreen({
             <span className="h-px flex-1 border-t border-dashed border-line" />
           </div>
           <div className="mt-4">
-            <DiveLog results={results} mpp={mpp} prompts={daily.prompts.map((p) => p.text)} />
+            <DiveLog results={results} prompts={daily.prompts.map((p) => p.text)} />
           </div>
-          <ol className="mt-4 grid gap-x-6 gap-y-1.5 text-sm sm:grid-cols-2">
+          <ol className="mt-6 space-y-3">
             {results.map((r, i) => (
-              <li key={i} className="flex min-w-0 items-center gap-2">
-                <span className="w-4 shrink-0 text-xs tabular-nums text-slate">{i + 1}</span>
-                <span className={`size-2.5 shrink-0 ${TONE_BG[toneOf(r)]}`} />
-                <span className="truncate text-ink">{r.answer ?? <span className="text-coral">no answer</span>}</span>
-                <span className="ml-auto shrink-0 tabular-nums text-mist">{meters(r.points * mpp)}</span>
-              </li>
+              <AnswerCard key={i} n={i + 1} promptId={daily.prompts[i]?.id ?? ""} prompt={daily.prompts[i]?.text ?? ""} result={r} delay={1.9 + i * 0.12} />
             ))}
           </ol>
         </section>
@@ -156,15 +148,119 @@ export function ResultsScreen({
           </ol>
         </section>
 
-        <div className="mt-12">
-          <Standings board={board} lost={sonarLost} mpp={mpp} you={nickname.trim() || "anon goose"} />
-        </div>
-
         <p className="mt-8 text-center text-xs text-slate">
           Next dive in <span className="font-pixel tabular-nums text-mist">{left === null ? "--:--:--" : clock(left)}</span>. Go to
           class.
         </p>
       </div>
     </div>
+  );
+}
+
+/** One prompt's verdict, shown only once the dive is over. */
+function AnswerCard({
+  n,
+  promptId,
+  prompt,
+  result: r,
+  delay,
+}: {
+  n: number;
+  promptId: string;
+  prompt: string;
+  result: GuessResult;
+  delay: number;
+}) {
+  const tone = toneOf(r);
+  const [open, setOpen] = useState(false);
+  const [rows, setRows] = useState<AnswerRow[] | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  // Fetch the full list the first time it's opened.
+  function toggle() {
+    setOpen((o) => !o);
+    if (rows || !promptId) return;
+    setFailed(false);
+    api
+      .answers(playerId(), promptId)
+      .then(setRows)
+      .catch(() => setFailed(true));
+  }
+  const typed = r.raw?.trim();
+  const top = r.top.slice(0, 3);
+  return (
+    <li className="animate-surface border-2 border-line bg-trench/80 p-4" style={{ animationDelay: `${delay}s` }}>
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="min-w-0 text-xs text-slate">
+          <span className="tabular-nums">{n}.</span> {prompt}
+        </span>
+        <span className="shrink-0 font-pixel tabular-nums text-mist">+{r.points} · {meters(dropOf(r))}</span>
+      </div>
+      <div className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        {CREATURE[tone] ? (
+          <img src={CREATURE[tone]!.src} alt={CREATURE[tone]!.name} title={CREATURE[tone]!.name} className="h-6 w-auto shrink-0 self-center" />
+        ) : (
+          <span className={`size-2.5 shrink-0 self-center ${TONE_BG[tone]}`} />
+        )}
+        <span className="font-pixel text-xl text-ink">{r.valid ? r.answer : typed ? `“${typed}”` : "No answer"}</span>
+        <span className={`text-sm uppercase tracking-[0.2em] ${TONE_TEXT[tone]}`}>{TONE_LABEL[tone]}</span>
+        {r.valid && <span className="text-xs text-mist">{r.share_pct}% said it</span>}
+      </div>
+      <div className="mt-2 space-y-1 text-xs">
+        {!r.golden && (
+          <p className="text-mist">
+            One in a Krillion: <b className="font-medium text-gold">{r.golden_answer}</b>
+          </p>
+        )}
+        {top.length > 0 && (
+          <p className="text-slate">
+            Most said:{" "}
+            {top.map((t, j) => (
+              <span key={t.answer} className={t.answer === r.answer ? "text-sonar" : "text-mist"}>
+                {j > 0 && " · "}
+                {t.answer} {t.pct}%
+              </span>
+            ))}
+          </p>
+        )}
+      </div>
+
+      <button
+        onClick={toggle}
+        aria-expanded={open}
+        className="mt-3 cursor-pointer text-[11px] uppercase tracking-[0.25em] text-sonar hover:text-foam"
+      >
+        {open ? "Hide answers ▴" : "Show all answers ▾"}
+      </button>
+      {open && (
+        <div className="mt-2 max-h-80 overflow-y-auto border-t border-line/60 pt-2">
+          {failed ? (
+            <p className="text-xs text-slate">Couldn’t load the answers. Try again in a moment.</p>
+          ) : !rows ? (
+            <p className="text-xs text-slate">Loading…</p>
+          ) : (
+            <ol className="space-y-0.5">
+              {rows.map((a) => {
+                const t = toneOfRarity(a.rarity);
+                return (
+                  <li
+                    key={a.answer}
+                    className={`grid grid-cols-[0.75rem_1fr_auto_auto] items-center gap-3 px-1 py-0.5 text-sm ${a.yours ? "bg-uoft/60" : ""}`}
+                  >
+                    <span className={`size-2 ${TONE_BG[t]}`} title={TONE_LABEL[t]} />
+                    <span className={`min-w-0 truncate ${a.golden ? "text-gold" : "text-ink"}`}>
+                      {a.answer}
+                      {a.yours && <span className="ml-2 text-[10px] uppercase tracking-[0.2em] text-sonar">you</span>}
+                    </span>
+                    <span className="text-xs tabular-nums text-slate">{a.pct}%</span>
+                    <span className={`w-10 text-right font-pixel tabular-nums ${TONE_TEXT[t]}`}>+{a.points}</span>
+                  </li>
+                );
+              })}
+            </ol>
+          )}
+        </div>
+      )}
+    </li>
   );
 }

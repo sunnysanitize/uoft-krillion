@@ -71,8 +71,8 @@ def test_fallback_prompts_are_stable_and_vary():
 
 
 def test_rarer_scores_higher():
-    assert game.score(0.01) > game.score(0.2) > game.score(0.6)
-    assert game.score(1.0) == 1
+    assert [game.score(s) for s in (0.01, 0.1, 0.2, 0.6)] == [85, 60, 30, 10]
+    assert game.score(0.6, golden=True) == 100
 
 
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
@@ -111,23 +111,23 @@ def test_full_round(client):
 
     golden = PROMPTS_BY_ID[pid].golden
     g = client.post("/api/guess", json={"player_id": "player-dddd", "prompt_id": pid, "answer": golden}).json()
-    assert g["golden"] and g["points"] > game.GOLDEN_BONUS
+    assert g["golden"] and g["points"] == game.GOLDEN_POINTS and g["rarity"] == "One in a Krillion"
     assert not a["golden"] and a["golden_answer"] == golden
 
     bad = client.post("/api/guess", json={"player_id": "player-cccc", "prompt_id": pid, "answer": "zzzz"}).json()
     assert not bad["valid"] and bad["points"] == 0
 
-    done = client.post("/api/finish", json={"player_id": "player-bbbb", "nickname": "deepdiver", "college": "Innis"}).json()
+    done = client.post("/api/finish", json={"player_id": "player-bbbb", "nickname": "deepdiver"}).json()
     assert done["score"] == b["points"]
     board = client.get("/api/leaderboard").json()
-    assert board["players"][0]["nickname"] == "deepdiver"
-    assert board["colleges"][0]["college"] == "Innis"
+    assert board["players"][0] == {"nickname": "deepdiver", "score": b["points"]}
+    assert "colleges" not in board
 
 
-def _gen_prompt(pid: str, n: int = generate.MIN_ANSWERS + 2, golden_at: int = 5, category: str = "places") -> generate.GenPrompt:
+def _gen_prompt(pid: str, n: int = generate.MIN_ANSWERS + 2, golden_at: int = -2, category: str = "places") -> generate.GenPrompt:
     answers = [generate.GenAnswer(name=f"Answer {pid} {i}", aliases=[f"alias {pid} {i}"]) for i in range(n)]
     return generate.GenPrompt(
-        id=pid, category=category, text=f"Name a {pid}", hint="Go deep.", golden=answers[golden_at].name, answers=answers,
+        id=pid, category=category, text=f"Name a UofT {pid}", hint="Go deep.", golden=answers[golden_at].name, answers=answers,
         decoys=[f"Wrong {pid} {i}" for i in range(3)],
     )
 
@@ -146,7 +146,7 @@ def test_clean_prompt_drops_colliding_aliases():
     prompt = generate.clean_prompt(gen)
     assert len(prompt.answers) == generate.MIN_ANSWERS + 2
     assert prompt.answers[1] == ("Answer x 1", "alias x 1")
-    assert prompt.golden == "Answer x 5"
+    assert prompt.golden == f"Answer x {generate.MIN_ANSWERS}"
 
 
 def test_clean_prompt_drops_decoys_that_would_score():
@@ -160,6 +160,12 @@ def test_clean_prompt_rejects_bad_prompts():
         generate.clean_prompt(_gen_prompt("x", n=generate.MIN_ANSWERS - 1))
     with pytest.raises(ValueError, match="too obvious"):
         generate.clean_prompt(_gen_prompt("x", golden_at=0))
+    with pytest.raises(ValueError, match="too obvious"):
+        generate.clean_prompt(_gen_prompt("x", golden_at=5))  # not in the last third
+    generic = _gen_prompt("x")
+    generic.text = "Name a Canadian province"
+    with pytest.raises(ValueError, match="doesn't name UofT"):
+        generate.clean_prompt(generic)
     bad = _gen_prompt("x")
     bad.golden = "Something made up"
     with pytest.raises(ValueError, match="isn't an answer"):
@@ -213,12 +219,17 @@ def test_serves_stored_set(client):
 
     daily = client.get("/api/daily").json()
     assert [p["id"] for p in daily["prompts"]] == [p.id for p in prompts]
-    suggestions = daily["prompts"][0]["suggestions"]
-    assert "Answer topic0 0" in suggestions and "Wrong topic0 1" in suggestions
-    assert "alias topic0 0" not in suggestions and suggestions == sorted(suggestions, key=str.lower)
+    assert "suggestions" not in daily["prompts"][0]  # the answer list never reaches the browser
 
-    g = client.post("/api/guess", json={"player_id": "player-aaaa", "prompt_id": "topic0", "answer": "alias topic0 5"}).json()
-    assert g["answer"] == "Answer topic0 5" and g["golden"]
+    check = lambda answer: client.post("/api/check", json={"prompt_id": "topic0", "answer": answer}).json()
+    assert check("alias topic0 3") == {"recognized": True, "correct": True, "suggestion": None}
+    assert check("Wrong topic0 1") == {"recognized": True, "correct": False, "suggestion": None}
+    assert check("Wrong topic0 1x")["suggestion"] == "Wrong topic0 1"
+    assert check("zzzzzz") == {"recognized": False, "correct": False, "suggestion": None}
+
+    golden = generate.MIN_ANSWERS
+    g = client.post("/api/guess", json={"player_id": "player-aaaa", "prompt_id": "topic0", "answer": f"alias topic0 {golden}"}).json()
+    assert g["answer"] == f"Answer topic0 {golden}" and g["golden"]
 
     old = client.post("/api/guess", json={"player_id": "player-aaaa", "prompt_id": "colleges", "answer": "vic"})
     assert old.status_code == 400
@@ -260,3 +271,34 @@ def test_accept_as_alias_checks_the_answer():
         review.with_answer(colleges, "Woody C", "Ryerson")
     with pytest.raises(ValueError, match="already counts"):
         review.with_answer(colleges, "vic", "Trinity")
+
+
+def test_rarity_tiers():
+    labels = [game.rarity_label(s) for s in (0.005, 0.03, 0.1, 0.25, 0.6)]
+    assert labels == ["Deep Cut", "Deep Cut", "Rare", "Uncommon", "Common"]
+    assert game.rarity_label(0.6, golden=True) == "One in a Krillion"
+
+
+def test_recognize_treats_answers_and_decoys_alike():
+    colleges = PROMPTS_BY_ID["colleges"]
+    assert game.recognize(colleges, "vic") == (True, None)
+    assert game.recognize(colleges, "Massey College") == (True, None)
+    # Typos of either kind are suggested, never silently accepted.
+    assert game.recognize(colleges, "Woodsworht") == (False, "Woodsworth College")
+    assert game.recognize(colleges, "Masey College") == (False, "Massey College")
+    assert game.recognize(colleges, "Ryerson Hall") == (False, None)
+
+
+def test_answers_list_only_after_playing(client):
+    pid = client.get("/api/daily").json()["prompts"][0]["id"]
+    ask = lambda player: client.post("/api/answers", json={"player_id": player, "prompt_id": pid})
+    assert ask("player-aaaa").status_code == 403  # no peeking before you play
+
+    obvious = PROMPTS_BY_ID[pid].answers[0][0]
+    client.post("/api/guess", json={"player_id": "player-aaaa", "prompt_id": pid, "answer": obvious})
+    rows = ask("player-aaaa").json()["answers"]
+    assert len(rows) == len(PROMPTS_BY_ID[pid].answers)
+    assert rows == sorted(rows, key=lambda r: -r["points"])
+    assert [r["answer"] for r in rows if r["yours"]] == [obvious]
+    golden = next(r for r in rows if r["golden"])
+    assert golden["points"] == game.GOLDEN_POINTS and golden["rarity"] == "One in a Krillion"

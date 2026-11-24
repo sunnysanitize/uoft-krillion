@@ -34,10 +34,11 @@ CREATE TABLE IF NOT EXISTS finishes (
     day TEXT NOT NULL,
     player_id TEXT NOT NULL,
     nickname TEXT NOT NULL,
-    college TEXT,
     score INTEGER NOT NULL,
     PRIMARY KEY (day, player_id)
 );
+-- Players used to represent a college; scores are individual now.
+ALTER TABLE finishes DROP COLUMN IF EXISTS college;
 """
 
 

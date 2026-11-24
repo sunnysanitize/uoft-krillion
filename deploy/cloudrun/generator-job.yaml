@@ -1,0 +1,40 @@
+# Cloud Run job that writes tomorrow's prompts. Cloud Scheduler runs it at 23:30 Toronto time
+# (see deploy/setup.sh). Same image as the API, different command. Applied with `gcloud run jobs replace`.
+apiVersion: run.googleapis.com/v1
+kind: Job
+metadata:
+  name: rarest-blue-generate
+  labels:
+    app: rarest-blue
+  annotations:
+    run.googleapis.com/launch-stage: GA
+spec:
+  template:
+    spec:
+      parallelism: 1
+      taskCount: 1
+      template:
+        spec:
+          serviceAccountName: rarest-blue-generator@${PROJECT_ID}.iam.gserviceaccount.com
+          # The generator makes up to 3 attempts of up to 420 s each (1260 s), so leave headroom past that.
+          # maxRetries reruns the whole job once more if it still exits non-zero.
+          maxRetries: 1
+          timeoutSeconds: 1500
+          containers:
+            - image: ${IMAGE}
+              command: ["python", "-m", "rarest_blue.entrypoints.cli.generate"]
+              resources:
+                limits:
+                  cpu: "1"
+                  memory: 512Mi
+              env:
+                - name: DATABASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: rarest-blue-database-url
+                      key: latest
+                - name: OPENROUTER_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: rarest-blue-openrouter-key
+                      key: latest

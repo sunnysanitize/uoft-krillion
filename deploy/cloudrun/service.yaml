@@ -1,0 +1,53 @@
+# Cloud Run service for the API. Rendered by .github/workflows/backend-deploy.yml with envsubst
+# (only PROJECT_ID, IMAGE and CORS_ORIGINS are substituted), then applied with `gcloud run services replace`.
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: rarest-blue-api
+  labels:
+    app: rarest-blue
+  annotations:
+    # The Next.js server proxies /api/* here, so it has to be reachable from the internet.
+    run.googleapis.com/ingress: all
+    run.googleapis.com/launch-stage: GA
+spec:
+  template:
+    metadata:
+      labels:
+        app: rarest-blue
+      annotations:
+        autoscaling.knative.dev/minScale: "0"
+        # Caps cost and the number of open Supabase connections (each request opens one through the pooler).
+        autoscaling.knative.dev/maxScale: "4"
+        run.googleapis.com/execution-environment: gen2
+        run.googleapis.com/cpu-throttling: "true"
+        run.googleapis.com/startup-cpu-boost: "true"
+    spec:
+      serviceAccountName: rarest-blue-api@${PROJECT_ID}.iam.gserviceaccount.com
+      containerConcurrency: 40
+      timeoutSeconds: 30
+      containers:
+        - image: ${IMAGE}
+          ports:
+            - name: http1
+              containerPort: 8080
+          resources:
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          env:
+            - name: CORS_ORIGINS
+              value: "${CORS_ORIGINS}"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: rarest-blue-database-url
+                  key: latest
+          startupProbe:
+            tcpSocket:
+              port: 8080
+            periodSeconds: 2
+            failureThreshold: 15
+  traffic:
+    - percent: 100
+      latestRevision: true

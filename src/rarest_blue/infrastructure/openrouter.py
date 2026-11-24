@@ -1,0 +1,39 @@
+"""OpenRouter adapter: the PromptWriter port backed by an LLM."""
+
+from __future__ import annotations
+
+import httpx
+
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+# Free models took 2-6 minutes per set in testing.
+REQUEST_TIMEOUT_SECONDS = 420
+
+
+class OpenRouterWriter:
+    def __init__(self, api_key: str, url: str = OPENROUTER_URL, timeout: float = REQUEST_TIMEOUT_SECONDS):
+        self._api_key = api_key
+        self._url = url
+        self._timeout = timeout
+
+    def write(self, request: str, model: str, response_schema: dict) -> str:
+        # Checked per call, not at startup, so a run that finds the day already stored needs no key.
+        if not self._api_key:
+            raise ValueError("OPENROUTER_API_KEY is not set")
+        response = httpx.post(
+            self._url,
+            headers={"Authorization": f"Bearer {self._api_key}", "X-Title": "UofT Krillion"},
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": request}],
+                "response_format": {
+                    "type": "json_schema",
+                    "json_schema": {"name": "prompt_set", "strict": True, "schema": response_schema},
+                },
+            },
+            timeout=self._timeout,
+        )
+        response.raise_for_status()
+        body = response.json()
+        if "error" in body:
+            raise ValueError(f"OpenRouter error: {body['error']}")
+        return body["choices"][0]["message"]["content"] or ""

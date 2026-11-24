@@ -8,8 +8,8 @@
 --   * an event trigger that turns RLS on for any table created in public later.
 --
 -- No explicit BEGIN/COMMIT: `supabase db push` wraps each file in its own transaction, and psql/the SQL Editor
--- can re-run it after a partial failure. Idempotent: safe to run before or after the backend's own `CREATE TABLE IF NOT EXISTS` (db.init_schema),
--- and safe to re-run. The table definitions must stay identical to SCHEMA in src/rarest_blue/db.py.
+-- can re-run it after a partial failure. Idempotent: safe to run before or after the backend's own `CREATE TABLE IF NOT EXISTS` (infrastructure/postgres.py init_schema),
+-- and safe to re-run. The table definitions must stay identical to SCHEMA in src/rarest_blue/infrastructure/postgres.py.
 
 CREATE TABLE IF NOT EXISTS public.daily_prompts (
     day TEXT PRIMARY KEY,
@@ -111,7 +111,7 @@ BEGIN
 END
 $$;
 
--- Turn RLS on for any table later created in public (e.g. a new table added to db.py's SCHEMA).
+-- Turn RLS on for any table later created in public (e.g. a new table added to the backend's SCHEMA).
 -- Creating an event trigger needs privileges some hosts withhold; if refused, the tables above stay locked down.
 -- Not SECURITY DEFINER: it runs as whoever created the table (its owner), so the ALTER always has rights, and
 -- a failure only warns, so the trigger can never block another role's CREATE TABLE.

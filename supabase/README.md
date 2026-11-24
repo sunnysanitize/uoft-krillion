@@ -6,7 +6,7 @@ Supabase is the production Postgres for Rarest Blue. It holds three tables:
 |---|---|
 | `daily_prompts` | One row per day: the 7 prompts the nightly LLM job wrote (answers, aliases, decoys, golden krill), plus `source` (the model name, or `fallback`) |
 | `guesses` | Every player's answer to every prompt, with the points and rarity share it scored |
-| `finishes` | Each player's final score, nickname and college for the day (the leaderboard) |
+| `finishes` | Each player's final score and nickname for the day (the leaderboard) |
 
 The FastAPI backend is the only thing that talks to the database. It connects as the `postgres` role over
 `DATABASE_URL` and doesn't use Supabase's REST API, auth or client libraries. The browser never talks to Supabase.
@@ -23,25 +23,25 @@ The migration:
 - adds an event trigger that turns RLS on for any table created in `public` later;
 - adds checks that mirror the API's own limits (ISO day, player id length, answer ≤ 80 chars, nickname ≤ 20, share in 0–1).
 
-The table definitions match `SCHEMA` in `src/rarest_blue/db.py`. If you change one, change the other.
+The table definitions match `SCHEMA` in `src/rarest_blue/infrastructure/postgres.py`. If you change one, change the other.
 
 ## Setup
 
 1. Create a Supabase project and save the database password in a password manager.
 2. In **Connect → Transaction pooler**, copy the URI (port 6543). Add `?sslmode=require` and put it in `.env` as
    `DATABASE_URL`. The backend already turns off prepared statements, which the transaction pooler needs.
-3. Apply the migration with any one of these:
-   - `psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/20261123000000_rarest_blue_init.sql`
+3. Apply the migrations, in filename order, with any one of these:
+   - `for f in supabase/migrations/*.sql; do psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -1 -f "$f"; done`
    - paste the file into the dashboard's **SQL Editor** and run it
    - `supabase db push` (Supabase CLI, after `supabase init` and `supabase link`)
 4. Check it: `supabase/verify.sh`. It reads `.env` (without executing it) and passes the password to `psql` through
    the environment, never on the command line. If `SUPABASE_URL` and `SUPABASE_ANON_KEY` are set, it also calls the
    REST and GraphQL APIs as a stranger would. It fails if the key is rejected, or if any read returns rows or any
    write gets through.
-5. Set the same `DATABASE_URL` on the API host and on the nightly `python -m rarest_blue.generate` job.
+5. Set the same `DATABASE_URL` on the API host and on the nightly generator job (`deploy/setup.sh` stores it in Secret Manager for both).
 
 The migration is idempotent, so it doesn't matter whether it runs before or after the backend first boots
-(`db.init_schema` only runs `CREATE TABLE IF NOT EXISTS`). Run `verify.sh` again after any schema change.
+(`postgres.init_schema` only runs `CREATE TABLE IF NOT EXISTS`). Run `verify.sh` again after any schema change.
 
 ## Keeping it safe
 

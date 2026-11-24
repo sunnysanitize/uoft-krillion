@@ -1,30 +1,30 @@
-"""Nightly job: ask an LLM (via OpenRouter) for tomorrow's prompt set and store it.
+"""Use case: have an LLM write tomorrow's prompt set, check it hard, and store it.
 
-Run with `python -m rarest_blue.generate` from src/. Scheduled at 23:30 Toronto
-time; at midnight the API starts serving the stored set. Exits non-zero if no
-valid set could be stored so the scheduler retries.
+The checks matter more than the model: enough answers, no colliding aliases, a real deep-cut golden answer, and
+decoys that don't accidentally match a real answer. A bad set is retried with the next model.
 """
 
-import argparse
+from __future__ import annotations
+
+import enum
 import json
-import os
+import logging
 import re
-import sys
 from collections import Counter
-from datetime import date, timedelta
+from dataclasses import dataclass, replace
+from datetime import date
 from typing import Literal
 
-import httpx
 from pydantic import BaseModel
 
-from . import db, game
-from .prompts import PROMPTS_BY_ID, Prompt, to_dict
+from ..domain import rules
+from ..domain.matching import match_answer, normalize
+from ..domain.models import Prompt
+from ..domain.prompt_bank import PROMPTS_BY_ID
+from .ports import PromptWriter, UnitOfWorkFactory
 
-OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-# Tried in order, one per attempt. Free models are rate-limited and come and go, so list a few.
-MODELS = os.environ.get(
-    "OPENROUTER_MODELS", "particle-ai/particle-1:free,nvidia/nemotron-3.5-super-vl:free,openrouter/free"
-).split(",")
+log = logging.getLogger(__name__)
+
 MIN_ANSWERS = 15
 GOLDEN_MIN_INDEX = 3
 # The golden answer must sit in the last part of the list, past this fraction of it.
@@ -34,10 +34,8 @@ UOFT_ANCHORS = (
     "uoft", "u of t", "university of toronto", "st. george", "st george", "utm", "utsc", "mississauga",
     "scarborough", "varsity", "robarts", "hart house", "sid smith", "bahen", "con hall", "convocation hall",
     "skule", "arts & sci", "arts and sci", "first-year", "frosh", "college",
-)
+)  # fmt: skip
 ATTEMPTS = 3
-# Free models took 2-6 minutes per set in testing.
-REQUEST_TIMEOUT_SECONDS = 420
 AVOID_RECENT_DAYS = 14
 # Free models default to "name a building" over and over, so cap how many prompts share a category.
 MAX_PER_CATEGORY = 2
@@ -64,13 +62,23 @@ class GenSet(BaseModel):
     prompts: list[GenPrompt]
 
 
+def _strict(schema: dict) -> dict:
+    """Mark every object closed, as strict JSON-schema mode requires."""
+    for obj in [schema, *schema.get("$defs", {}).values()]:
+        if obj.get("type") == "object":
+            obj["additionalProperties"] = False
+    return schema
+
+
+RESPONSE_SCHEMA = _strict(GenSet.model_json_schema())
+
 INSTRUCTIONS = f"""\
 You write the daily prompt set for UofT Krillion, a trivia game for University of Toronto students.
 Players get a prompt like "Name a St. George college" and type any valid answer. The fewer
 players who give the same answer, the more points they score, so every prompt needs a
 large, complete, factually accurate list of valid answers.
 
-Write exactly {game.PROMPTS_PER_DAY} prompts. Rules:
+Write exactly {rules.PROMPTS_PER_DAY} prompts. Rules:
 - Niche is the point. Every prompt must be something only a UofT student or alum would know:
   campuses, buildings, course codes, clubs, traditions, residences, campus food, alumni, profs,
   slang. No general Toronto, Canada or world trivia, and no broad categories anyone could answer
@@ -98,18 +106,7 @@ Write exactly {game.PROMPTS_PER_DAY} prompts. Rules:
 
 def _examples() -> str:
     picks = [(PROMPTS_BY_ID["colleges"], "places"), (PROMPTS_BY_ID["alumni"], "people")]
-    return json.dumps({"prompts": [{**to_dict(p), "category": c} for p, c in picks]}, indent=1)
-
-
-def _strict(schema: dict) -> dict:
-    """Mark every object closed, as strict JSON-schema mode requires."""
-    for obj in [schema, *schema.get("$defs", {}).values()]:
-        if obj.get("type") == "object":
-            obj["additionalProperties"] = False
-    return schema
-
-
-RESPONSE_SCHEMA = _strict(GenSet.model_json_schema())
+    return json.dumps({"prompts": [{**p.to_dict(), "category": c} for p, c in picks]}, indent=1)
 
 
 def build_request(avoid: list[str]) -> str:
@@ -123,6 +120,12 @@ def build_request(avoid: list[str]) -> str:
     if avoid:
         parts += ["Recently used prompts. Don't repeat these or close variants:", "\n".join(f"- {t}" for t in avoid)]
     return "\n\n".join(parts)
+
+
+def parse_reply(content: str) -> GenSet:
+    # Some models wrap JSON in a code fence even when asked not to.
+    content = re.sub(r"^```(?:json)?\s*|\s*```$", "", (content or "").strip())
+    return GenSet.model_validate_json(content)
 
 
 def _slug(text: str) -> str:
@@ -142,13 +145,13 @@ def clean_prompt(gen: GenPrompt) -> Prompt:
     answers: list[tuple[str, ...]] = []
     for ans in gen.answers:
         name = ans.name.strip()
-        key = game.normalize(name)
+        key = normalize(name)
         if not key or key in taken:
             continue
         names = [name]
         taken.add(key)
         for alias in ans.aliases:
-            alias_key = game.normalize(alias)
+            alias_key = normalize(alias)
             if alias_key and alias_key not in taken:
                 names.append(alias.strip())
                 taken.add(alias_key)
@@ -158,7 +161,7 @@ def clean_prompt(gen: GenPrompt) -> Prompt:
         raise ValueError(f"{gen.id}: only {len(answers)} usable answers")
 
     canon = [names[0] for names in answers]
-    golden = next((n for n in canon if game.normalize(n) == game.normalize(gen.golden)), None)
+    golden = next((n for n in canon if normalize(n) == normalize(gen.golden)), None)
     if golden is None:
         raise ValueError(f"{gen.id}: golden '{gen.golden}' isn't an answer")
     if canon.index(golden) < max(GOLDEN_MIN_INDEX, int(len(canon) * GOLDEN_MIN_FRACTION)):
@@ -170,91 +173,82 @@ def clean_prompt(gen: GenPrompt) -> Prompt:
     # A "decoy" that matches a real answer would score, so drop those.
     decoys: dict[str, str] = {}
     for decoy in gen.decoys:
-        decoy, key = decoy.strip(), game.normalize(decoy)
-        if key and key not in taken and key not in decoys and game.match_answer(prompt, decoy) is None:
+        decoy, key = decoy.strip(), normalize(decoy)
+        if key and key not in taken and key not in decoys and match_answer(prompt, decoy) is None:
             decoys[key] = decoy
-    return Prompt(**{**prompt.__dict__, "decoys": list(decoys.values())})
+    return replace(prompt, decoys=list(decoys.values()))
 
 
 def clean_set(gen: GenSet) -> list[Prompt]:
-    if len(gen.prompts) < game.PROMPTS_PER_DAY:
-        raise ValueError(f"got {len(gen.prompts)} prompts, need {game.PROMPTS_PER_DAY}")
-    prompts = [clean_prompt(p) for p in gen.prompts[: game.PROMPTS_PER_DAY]]
+    n_needed = rules.PROMPTS_PER_DAY
+    if len(gen.prompts) < n_needed:
+        raise ValueError(f"got {len(gen.prompts)} prompts, need {n_needed}")
+    picked = gen.prompts[:n_needed]
+    prompts = [clean_prompt(p) for p in picked]
     ids = [p.id for p in prompts]
     if len(set(ids)) != len(ids):
         raise ValueError(f"duplicate prompt ids: {ids}")
-    category, n = Counter(p.category for p in gen.prompts[: game.PROMPTS_PER_DAY]).most_common(1)[0]
+    category, n = Counter(p.category for p in picked).most_common(1)[0]
     if n > MAX_PER_CATEGORY:
         raise ValueError(f"{n} prompts are '{category}', max is {MAX_PER_CATEGORY}")
     return prompts
 
 
-def ask_llm(request: str, model: str) -> GenSet:
-    response = httpx.post(
-        OPENROUTER_URL,
-        headers={"Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}", "X-Title": "UofT Krillion"},
-        json={
-            "model": model,
-            "messages": [{"role": "user", "content": request}],
-            "response_format": {
-                "type": "json_schema",
-                "json_schema": {"name": "prompt_set", "strict": True, "schema": RESPONSE_SCHEMA},
-            },
-        },
-        timeout=REQUEST_TIMEOUT_SECONDS,
-    )
-    response.raise_for_status()
-    body = response.json()
-    if "error" in body:
-        raise ValueError(f"OpenRouter error: {body['error']}")
-    content = body["choices"][0]["message"]["content"] or ""
-    # Some models wrap JSON in a code fence even when asked not to.
-    content = re.sub(r"^```(?:json)?\s*|\s*```$", "", content.strip())
-    return GenSet.model_validate_json(content)
+class GenerationFailed(RuntimeError):
+    pass
 
 
-def generate(day: date, avoid: list[str]) -> tuple[list[Prompt], str]:
-    """Returns the cleaned set and the model that wrote it."""
-    request = build_request(avoid)
-    errors = []
-    for attempt in range(1, ATTEMPTS + 1):
-        model = MODELS[(attempt - 1) % len(MODELS)].strip()
-        try:
-            return clean_set(ask_llm(request, model)), model
-        except Exception as e:  # API errors and validation failures both get another try
-            print(f"attempt {attempt}/{ATTEMPTS} ({model}) failed: {e}", file=sys.stderr)
-            errors.append(e)
-    raise RuntimeError(f"no valid set for {day} after {ATTEMPTS} attempts") from errors[-1]
+class PromptSetGenerator:
+    """Asks the writer for a set, cycling through models, until one passes every check."""
+
+    def __init__(self, writer: PromptWriter, models: list[str], attempts: int = ATTEMPTS):
+        if not models:
+            raise ValueError("need at least one model")
+        self._writer = writer
+        self._models = models
+        self._attempts = attempts
+
+    def generate(self, day: date, avoid: list[str]) -> tuple[list[Prompt], str]:
+        """Returns the cleaned set and the model that wrote it."""
+        request = build_request(avoid)
+        last: Exception | None = None
+        for attempt in range(1, self._attempts + 1):
+            model = self._models[(attempt - 1) % len(self._models)].strip()
+            try:
+                return clean_set(parse_reply(self._writer.write(request, model, RESPONSE_SCHEMA))), model
+            except Exception as e:  # API errors and validation failures both get another try
+                log.warning("attempt %d/%d (%s) failed: %s", attempt, self._attempts, model, e)
+                last = e
+        raise GenerationFailed(f"no valid set for {day} after {self._attempts} attempts") from last
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--day", type=date.fromisoformat, help="day to generate (default: tomorrow in Toronto)")
-    parser.add_argument("--dry-run", action="store_true", help="print the set instead of storing it")
-    args = parser.parse_args(argv)
-    day = args.day or game.today() + timedelta(days=1)
-
-    db.init_schema()
-    with db.connect() as conn:
-        if not args.dry_run and db.load_prompts(conn, day) is not None:
-            print(f"{day} already has a set; nothing to do")
-            return 0
-        avoid = db.recent_prompt_texts(conn, day, AVOID_RECENT_DAYS)
-
-    try:
-        prompts, model = generate(day, avoid)
-    except RuntimeError as e:
-        print(e, file=sys.stderr)
-        return 1
-
-    if args.dry_run:
-        print(json.dumps([to_dict(p) for p in prompts], indent=2))
-        return 0
-    with db.connect() as conn:
-        stored = db.save_prompts(conn, day, prompts, source=model)
-    print(f"{day}: {'stored' if stored else 'already had a set, kept it'} ({', '.join(p.id for p in prompts)})")
-    return 0
+class Outcome(enum.Enum):
+    STORED = enum.auto()
+    SKIPPED = enum.auto()  # the day already had a set, so nothing was generated
+    ALREADY_HAD_SET = enum.auto()  # another run stored a set while this one was generating
+    DRY_RUN = enum.auto()
 
 
-if __name__ == "__main__":
-    sys.exit(main())
+@dataclass(frozen=True)
+class NightlyResult:
+    outcome: Outcome
+    day: date
+    prompts: list[Prompt]
+
+
+def run_nightly(
+    uow: UnitOfWorkFactory, generator: PromptSetGenerator, day: date, dry_run: bool = False
+) -> NightlyResult:
+    """Generate and store `day`'s set unless it already has one. Raises GenerationFailed if no set passes."""
+    with uow() as tx:
+        if not dry_run and tx.prompts.get(day) is not None:
+            return NightlyResult(Outcome.SKIPPED, day, [])
+        avoid = tx.prompts.recent_texts(day, AVOID_RECENT_DAYS)
+
+    # The LLM call can take minutes, so it runs outside any transaction.
+    prompts, model = generator.generate(day, avoid)
+    if dry_run:
+        return NightlyResult(Outcome.DRY_RUN, day, prompts)
+    with uow() as tx:
+        stored = tx.prompts.add(day, prompts, source=model)
+    return NightlyResult(Outcome.STORED if stored else Outcome.ALREADY_HAD_SET, day, prompts)

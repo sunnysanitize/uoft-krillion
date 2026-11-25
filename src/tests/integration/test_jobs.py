@@ -3,7 +3,7 @@ from datetime import timedelta
 from rarest_blue.application import review
 from rarest_blue.domain import days, rules
 from rarest_blue.entrypoints.cli import generate as generate_cli
-from tests.factories import FakeWriter
+from tests.factories import FakeWriter, gen_set
 
 
 def test_generator_stores_two_days_ahead_once(database, uow):
@@ -16,7 +16,8 @@ def test_generator_stores_two_days_ahead_once(database, uow):
     assert [p.id for p in stored] == [f"topic{i}" for i in range(rules.PROMPTS_PER_DAY)]
 
     assert generate_cli.main([], settings=database, writer=writer) == 0  # second run is a no-op
-    assert writer.models == [database.generator_model, database.verifier_model]
+    # One generator request, then one searching verifier request per prompt; the second run asks for nothing.
+    assert writer.models == [database.generator_model] + [database.verifier_model] * len(gen_set().prompts)
 
 
 def test_generator_retries_then_fails(database):

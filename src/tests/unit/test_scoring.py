@@ -4,7 +4,7 @@ import pytest
 
 from rarest_blue.domain import scoring
 from rarest_blue.domain.models import Prompt
-from rarest_blue.domain.prompt_bank import PROMPTS_BY_ID
+from tests.factories import COLLEGES
 
 
 def _list(n: int) -> Prompt:
@@ -53,14 +53,14 @@ def test_points_and_labels_agree():
 
 
 def test_golden_and_invalid_points():
-    colleges = PROMPTS_BY_ID["colleges"]
+    colleges = COLLEGES
     counts = scoring.answer_counts(colleges, {})
     assert scoring.points_for(colleges, None, counts) == 0
     assert scoring.points_for(colleges, colleges.golden, counts) == 100
 
 
 def test_answer_counts_add_tallies_to_priors():
-    colleges = PROMPTS_BY_ID["colleges"]
+    colleges = COLLEGES
     priors = scoring.prior_counts(colleges)
     counts = scoring.answer_counts(colleges, {"Innis College": 3})
     assert counts["Innis College"] == priors["Innis College"] + 3

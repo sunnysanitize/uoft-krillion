@@ -2,7 +2,7 @@ from rarest_blue.application import generation
 from rarest_blue.domain import days, rules
 from rarest_blue.domain.models import Prompt
 from rarest_blue.domain.prompt_bank import PROMPTS, PROMPTS_BY_ID
-from tests.factories import all_clear, gen_set
+from tests.factories import COLLEGES, all_clear, gen_set
 
 
 def _guess(client, player, pid, answer):
@@ -136,7 +136,7 @@ def test_attempt_rejects_wrong_answers_without_spending_the_prompt(client, uow):
 
 def test_attempt_offers_suggestions_and_preserves_timeout_submission(client, uow):
     with uow() as tx:
-        tx.prompts.add(days.today(), [PROMPTS_BY_ID["colleges"]], source="test")
+        tx.prompts.add(days.today(), [COLLEGES], source="test")
     body = {"player_id": "player-aaaa", "prompt_id": "colleges", "answer": "Woodsworht"}
     result = client.post("/api/attempt", json=body).json()
     assert result == {

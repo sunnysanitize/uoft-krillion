@@ -43,8 +43,8 @@ def test_clean_prompt_rejects_bad_prompts():
     with pytest.raises(ValueError, match="usable answers"):
         generation.clean_prompt(gen_prompt("x", n=generation.MIN_ANSWERS - 1))
     # A golden outside the last third hands the bonus to the deepest answer.
-    assert generation.clean_prompt(gen_prompt("x", golden_at=0)).golden == "Answer x 16"
-    assert generation.clean_prompt(gen_prompt("x", golden_at=5)).golden == "Answer x 16"
+    assert generation.clean_prompt(gen_prompt("x", golden_at=0)).golden == f"Answer x {generation.MIN_ANSWERS + 1}"
+    assert generation.clean_prompt(gen_prompt("x", golden_at=5)).golden == f"Answer x {generation.MIN_ANSWERS + 1}"
     generic = gen_prompt("x")
     generic.text = "Name a Canadian province"
     with pytest.raises(ValueError, match="doesn't name UofT"):
@@ -124,14 +124,30 @@ def test_verdict_must_judge_the_list_item_by_item():
     assert match_answer(prompt, "double shot x") == "Answer x 0"
 
 
-def test_closed_prompts_take_only_a_few_checked_additions():
+def test_closed_prompts_take_sourced_additions_but_not_a_sample():
     gen = gen_prompt("x")
     missing = tuple(addition(f"New {i}") for i in range(5))
     canon = canon_of(gen, verdict(gen, missing=missing))
-    assert canon[-4:-2] == ["New 0", "New 1"] and "New 2" not in canon
-    # No more than the set has room for, per the writer's own count.
-    gen.set_size = len(gen.answers) + 1
-    assert "New 1" not in canon_of(gen, verdict(gen, missing=missing))
+    assert canon[-7:-2] == [f"New {i}" for i in range(5)]
+    # So many missing that the writer's list was a sample of the set.
+    many = tuple(addition(f"New {i}") for i in range(generation.MAX_CLOSED_ADDITIONS + 1))
+    with pytest.raises(ValueError, match="sample"):
+        generation.apply_verdict(gen, verdict(gen, missing=many))
+    # Checked from memory only: no source, so nothing to trust the list or the additions against.
+    with pytest.raises(ValueError, match="no source"):
+        generation.apply_verdict(gen, verdict(gen, sources=[]))
+    # Members on the verifier's source that the list misses go in, matched by alias and leading words, not fuzzily.
+    source = ["Answer x 0", "alias x 3", "Answer x 5 Extension", "Answer x 6 Annex", "Erindale Studio Theatre"]
+    gen.answers[6].name = "Answer x 6 Annex Building"
+    canon = canon_of(gen, verdict(gen, source_members=source))
+    assert canon.count("Erindale Studio Theatre") == 1 and "Answer x 5 Extension" in canon
+    assert "Answer x 0" in canon and "alias x 3" not in canon and "Answer x 6 Annex" not in canon
+    # A source's fuller or shorter form of a name already listed isn't a new answer.
+    gen.answers[7].name = "David R. Peterson"
+    source = ["David Peterson", "The Honourable David R. Peterson", "Michael Wilson"]
+    canon = canon_of(gen, verdict(gen, source_members=source))
+    assert "David Peterson" not in canon and "The Honourable David R. Peterson" not in canon
+    assert "Michael Wilson" in canon
     # A closed list longer than its set is padded.
     gen.set_size = len(gen.answers) - 1
     with pytest.raises(ValueError, match="padding"):
@@ -141,6 +157,16 @@ def test_closed_prompts_take_only_a_few_checked_additions():
     unexplained = generation.GenAnswer(name="No Reason", aliases=[], why=" ")
     canon = canon_of(gen, verdict(gen, invalid=("Answer x 1",), missing=(addition("Wrong x 0"), unexplained)))
     assert "Wrong x 0" not in canon and "No Reason" not in canon
+
+
+def test_incomplete_lists_are_thrown_out():
+    gen = gen_prompt("x")
+    with pytest.raises(ValueError, match="incomplete"):
+        generation.apply_verdict(gen, verdict(gen, complete=False))
+    # The writer's own count saying the list is a sample of its set.
+    gen.set_size = len(gen.answers) + 3
+    with pytest.raises(ValueError, match="sample"):
+        generation.apply_verdict(gen, verdict(gen))
 
 
 def test_open_prompts_need_a_broad_list_and_take_every_addition():
@@ -166,7 +192,7 @@ def test_clean_prompt_drops_decoys_sharing_a_name_with_an_answer():
 def test_verify_request_shows_the_hint():
     gen = gen_set()
     gen.prompts[0].hint = "Energy drinks count too."
-    assert "Energy drinks count too." in generation.build_verify_request(gen)
+    assert "Energy drinks count too." in generation.build_verify_request(gen.prompts[0])
 
 
 def test_check_candidates_skips_rejected_and_unjudged_prompts():
@@ -192,8 +218,19 @@ def test_generator_writes_then_verifies():
     writer = FakeWriter()
     prompts, source = generation.PromptSetGenerator(writer, "gen", "check").generate(date(2026, 11, 24), [])
     assert len(prompts) == rules.PROMPTS_PER_DAY
-    assert writer.models == ["gen", "check"]
+    # One searching check per prompt.
+    assert writer.models == ["gen"] + ["check"] * rules.PROMPTS_PER_DAY
     assert source == "gen + check"
+
+
+def test_one_failed_check_drops_only_its_prompt():
+    gen = gen_set()
+    gen.prompts.append(gen_prompt("spare", category="toronto"))
+    # No verdict for topic0, so its check raises, like an API error would.
+    verdicts = generation.Verdicts(prompts=[verdict(p) for p in gen.prompts[1:]])
+    writer = FakeWriter(reply=gen, verdicts=verdicts)
+    prompts, _ = generation.PromptSetGenerator(writer, "gen", "check").generate(date(2026, 11, 24), [])
+    assert "topic0" not in [p.id for p in prompts] and "spare" in [p.id for p in prompts]
 
 
 def test_generator_retries_then_gives_up():
@@ -202,6 +239,25 @@ def test_generator_retries_then_gives_up():
     with pytest.raises(generation.GenerationFailed):
         gen.generate(date(2026, 11, 24), [])
     assert writer.models == ["gen"] * generation.ATTEMPTS
+
+
+def test_generator_keeps_passing_candidates_across_attempts():
+    # Each batch has only half a day of usable prompts; together they fill it.
+    batches = [gen_set(), gen_set()]
+    for i, batch in enumerate(batches):
+        for p in batch.prompts:
+            p.id, p.answers = f"{p.id}_{i}", [a.model_copy(update={"name": f"{a.name} {i}"}) for a in p.answers]
+            p.golden = p.answers[-2].name
+        batch.prompts = batch.prompts[: rules.PROMPTS_PER_DAY // 2 + i]
+
+    class Batches(FakeWriter):
+        def write(self, request, model, response_schema, temperature, web_search=False):
+            if response_schema is generation.RESPONSE_SCHEMA:
+                self.reply = batches.pop(0)
+            return super().write(request, model, response_schema, temperature, web_search)
+
+    prompts, _ = generation.PromptSetGenerator(Batches(), "gen", "check").generate(date(2026, 11, 24), [])
+    assert len(prompts) == rules.PROMPTS_PER_DAY
 
 
 def test_request_lists_prompts_to_avoid():

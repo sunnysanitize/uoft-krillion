@@ -42,10 +42,11 @@ jobs:
           cache: pip
           cache-dependency-path: src/requirements.lock
 
-      - name: Install (same hashed lock as the image, plus tools)
+      - name: Install (same hashed lock as the image, the review bot's extra deps, plus tools)
         working-directory: src
         run: |
           pip install --require-hashes --no-deps -r requirements.lock
+          pip install -r requirements-bot.txt
           pip install pytest==8.3.5 ruff==0.11.13 pip-audit==2.9.0
 
       - name: Lint
@@ -53,7 +54,9 @@ jobs:
         run: ruff check --output-format=github . && ruff format --check .
 
       - name: Audit dependencies
-        run: pip-audit --strict --require-hashes --disable-pip -r src/requirements.lock
+        run: |
+          pip-audit --strict --require-hashes --disable-pip -r src/requirements.lock
+          pip-audit --strict -r src/requirements-bot.txt
 
       - name: Apply Supabase migrations in order (with Supabase's API roles, twice for idempotence)
         run: |

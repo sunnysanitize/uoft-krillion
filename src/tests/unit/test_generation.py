@@ -26,6 +26,13 @@ def test_clean_prompt_drops_colliding_aliases():
     assert prompt.golden == f"Answer x {generation.MIN_ANSWERS}"
 
 
+def test_clean_prompt_keeps_the_golden_answers_why():
+    gen = gen_prompt("x")
+    golden = next(a for a in gen.answers if a.name == gen.golden)
+    golden.why = "  Hidden in plain sight.  "
+    assert generation.clean_prompt(gen).golden_why == "Hidden in plain sight."
+
+
 def test_clean_prompt_drops_decoys_that_would_score():
     gen = gen_prompt("x")
     gen.decoys += ["alias x 3", "Answer x 7", "Answr x 8", "wrong x 0", "  "]

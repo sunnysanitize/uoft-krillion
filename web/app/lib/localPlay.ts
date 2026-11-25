@@ -98,7 +98,7 @@ export function localAttempt(play: LocalPlay, raw: string, force = false): Attem
     result: {
       valid: !!row, answer: row?.names[0] ?? null, points: row?.points ?? 0,
       share_pct: row?.share_pct ?? null, rarity: row?.rarity ?? null, golden: row?.golden ?? false,
-      golden_answer: play.golden_answer, top: play.top, deep_cuts: play.deep_cuts,
+      golden_answer: play.golden_answer, golden_why: play.golden_why, top: play.top, deep_cuts: play.deep_cuts,
       players: play.players, valid_answers: play.valid_answers,
     },
   };

@@ -1,7 +1,14 @@
 """Builders for generated prompt sets, shared by unit and integration tests."""
 
+import json
+from pathlib import Path
+
 from rarest_blue.application import generation
 from rarest_blue.domain import rules
+from rarest_blue.domain.models import Prompt
+
+# Retired small question, retained only as a stable matching/scoring test fixture.
+COLLEGES = Prompt.from_dict(json.loads((Path(__file__).parent / "fixtures/colleges.json").read_text()))
 
 
 def gen_prompt(
@@ -51,6 +58,9 @@ def verdict(
             ],
             "decoys": [generation.DecoyCheck(decoy=d, defensible=d in defensible) for d in gen.decoys],
             "missing_answers": list(missing),
+            "source_members": [],
+            "sources": ["https://www.utoronto.ca/"],
+            "complete": True,
             "ambiguous": False,
             "problem": "",
             **kw,
@@ -65,17 +75,22 @@ def all_clear(gen: generation.GenSet) -> generation.Verdicts:
 class FakeWriter:
     """A PromptWriter that replays canned replies (or raises) and records which models were asked.
 
-    Generator requests get `reply` (default: a full set); verifier requests get `verdicts` (default: all clear).
+    Generator requests get `reply` (default: a full set); each prompt's verifier request gets its verdict from
+    `verdicts` (default: all clear), and must ask for a web search.
     """
 
     def __init__(self, reply=None, verdicts=None, error: Exception | None = None):
         self.reply, self.verdicts, self.error, self.models = reply, verdicts, error, []
 
-    def write(self, request: str, model: str, response_schema: dict, temperature: float) -> str:
+    def write(
+        self, request: str, model: str, response_schema: dict, temperature: float, web_search: bool = False
+    ) -> str:
         self.models.append(model)
         if self.error:
             raise self.error
         gen = self.reply or gen_set()
         if response_schema is generation.VERDICT_SCHEMA:
-            return (self.verdicts or all_clear(gen)).model_dump_json()
+            assert web_search
+            verdict = next(v for v in (self.verdicts or all_clear(gen)).prompts if f'"id": "{v.id}"' in request)
+            return verdict.model_dump_json()
         return gen.model_dump_json()

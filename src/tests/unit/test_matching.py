@@ -3,7 +3,8 @@ from pathlib import Path
 
 from rarest_blue.domain.matching import match_answer, normalize, recognize
 from rarest_blue.domain.models import Prompt
-from rarest_blue.domain.prompt_bank import PROMPTS, PROMPTS_BY_ID
+from rarest_blue.domain.prompt_bank import PROMPTS
+from tests.factories import COLLEGES
 
 
 def test_shared_browser_matching_fixture_tracks_server_rules():
@@ -23,7 +24,7 @@ def test_shared_browser_matching_fixture_tracks_server_rules():
 
 
 def test_aliases_and_typos_match():
-    colleges = PROMPTS_BY_ID["colleges"]
+    colleges = COLLEGES
     assert match_answer(colleges, "Vic") == "Victoria College"
     assert match_answer(colleges, "st. mike's") == "St. Michael's College"
     assert match_answer(colleges, "Woodsworht") == "Woodsworth College"
@@ -71,7 +72,7 @@ def test_no_alias_collisions_within_a_prompt():
 
 
 def test_recognize_treats_answers_and_decoys_alike():
-    colleges = PROMPTS_BY_ID["colleges"]
+    colleges = COLLEGES
     assert recognize(colleges, "vic") == (True, None)
     assert recognize(colleges, "Massey College") == (True, None)
     # Typos of either kind are suggested, never silently accepted.

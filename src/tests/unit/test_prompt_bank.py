@@ -18,26 +18,33 @@ def test_every_accepted_name_matches_its_own_answer():
                 assert match_answer(prompt, name) == names[0], (prompt.id, name)
 
 
-def test_college_questions_distinguish_membership_from_theology():
-    artsci = PROMPTS_BY_ID["colleges"]
-    theology = PROMPTS_BY_ID["theology_colleges"]
-    assert "Arts & Science" in artsci.text and len(artsci.answers) == 7
-    assert "Toronto School of Theology" in theology.text and len(theology.answers) == 7
-    for name in ("Knox", "Wycliffe", "Emmanuel", "Regis"):
-        assert match_answer(theology, name) is not None
-        assert match_answer(artsci, name) is None
-    assert match_answer(theology, "St. Augustine's Seminary") == "St. Augustine's Seminary"
-    assert match_answer(theology, "Massey") is None
+def test_fallback_questions_have_room_for_rare_answers():
+    assert all(len(p.answers) >= rules.MIN_ACCEPTED_ANSWERS for p in PROMPTS)
+    assert not {
+        "colleges",
+        "theology_colleges",
+        "alumni",
+        "core_eight",
+        "engsci_majors",
+        "hart_house_committees",
+    } & set(PROMPTS_BY_ID)
 
 
-def test_engsci_includes_transportation_and_separates_core_eight():
-    engsci = PROMPTS_BY_ID["engsci_majors"]
-    core = PROMPTS_BY_ID["core_eight"]
-    assert len(engsci.answers) == 9 and len(core.answers) == 8
-    assert match_answer(engsci, "Transportation Systems Engineering") == "Transportation Systems Engineering"
-    assert match_answer(core, "Mineral Engineering") == "Mineral Engineering"
-    assert match_answer(core, "Machine Intelligence") is None
-    assert match_answer(engsci, "Mineral Engineering") is None
+def test_broader_engineering_question_accepts_both_paths():
+    prompt = PROMPTS_BY_ID["engineering_disciplines"]
+    assert len(prompt.answers) == 17
+    for name in ("Transportation Systems Engineering", "Mineral Engineering", "Machine Intelligence"):
+        assert match_answer(prompt, name) == name
+    assert match_answer(prompt, "TrackOne") is None
+    assert match_answer(prompt, "Software Engineering") is None
+
+
+def test_directory_questions_accept_familiar_short_names():
+    libraries = PROMPTS_BY_ID["libraries"]
+    assert match_answer(libraries, "robarts") == "Robarts Library"
+    assert match_answer(libraries, "utm library") == "U of T Mississauga Library"
+    assert match_answer(PROMPTS_BY_ID["faculties_divisions"], "oise") == "Ontario Institute for Studies in Education"
+    assert match_answer(PROMPTS_BY_ID["utm_programs"], "ccit") == "Communication, Culture, Information and Technology"
 
 
 def test_fallback_prompts_have_decoys_that_dont_score():
@@ -64,3 +71,10 @@ def test_fallback_prompts_are_stable_and_vary():
 def test_prompt_round_trips_through_dict():
     for p in PROMPTS:
         assert type(p).from_dict(p.to_dict()) == p
+
+
+def test_fallback_selection_excludes_small_questions():
+    from tests.factories import COLLEGES
+
+    day = date(2026, 11, 24)
+    assert days.pick_fallback(day, [*PROMPTS, COLLEGES]) == days.pick_fallback(day, PROMPTS)

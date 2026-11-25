@@ -1,7 +1,8 @@
 """Use case: have an LLM write tomorrow's prompt set, fact-check it with a second LLM, check it hard, and store it.
 
-The generator over-writes candidates. The verifier, from a different model family, judges every answer and every decoy
-one by one, and adds answers the writer missed. Then the code checks what's left: enough answers for how open the
+The generator over-writes candidates. The verifier, from a different model family, checks each prompt on its own with
+web search: it finds the official list, judges every answer and every decoy one by one, and adds the answers the writer
+missed. Then the code checks what's left: enough answers for how open the
 prompt is, no colliding aliases, a real deep-cut golden answer, decoys that don't overlap a real answer, and nothing
 that reruns a recent prompt.
 """
@@ -14,6 +15,7 @@ import logging
 import random
 import re
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from datetime import date
 from typing import Literal
@@ -29,16 +31,21 @@ from .ports import PromptWriter, UnitOfWorkFactory
 log = logging.getLogger(__name__)
 
 # Ask for more prompts than a day needs, so the verifier and the repeat check can throw some away.
-CANDIDATES = 12
-MIN_ANSWERS = 15
-# What the generator is asked for: enough headroom that the verifier can cut a few and stay above MIN_ANSWERS.
-TARGET_ANSWERS = 20
+CANDIDATES = 15
+# Specific sets ("a room in Myhal") are welcome, since broad ones run out; what a closed prompt can't be is incomplete.
+MIN_ANSWERS = rules.MIN_ACCEPTED_ANSWERS
+# The writer is told to pick sets at least this big, with headroom for the verifier's cuts above MIN_ANSWERS.
+MIN_SET_SIZE = 20
 # Open prompts ("a food from a food truck") have no fixed list, so players type far more than any list holds.
 OPEN_MIN_ANSWERS = 30
 OPEN_TARGET_ANSWERS = 45
-# The verifier's additions go into the game unchecked. On a closed, factual set that's where wrong answers came from
-# ("presidents" who led other universities), so it may only fill a gap or two there.
-MAX_CLOSED_ADDITIONS = 2
+# The verifier's additions go into the game unchecked. On a closed set they must come from the sources it searched (from
+# memory they were how wrong answers got in, "presidents" who led other universities). Filling gaps from a source is
+# the point, so this is generous; more than this and the writer was listing some other set.
+MAX_CLOSED_ADDITIONS = 30
+NAME_TITLES = frozenset({"the", "honourable", "hon", "sir", "dr", "rt", "right", "reverend", "rev"})
+# Each prompt gets its own verifier request so it can search for that set; these run side by side.
+VERIFY_WORKERS = 8
 # A verdict that skips this much of the answer list didn't really check it.
 MIN_JUDGED_SHARE = 0.8
 GOLDEN_MIN_INDEX = 3
@@ -48,12 +55,12 @@ GOLDEN_MIN_FRACTION = 2 / 3
 UOFT_ANCHORS = (
     "uoft", "u of t", "university of toronto", "st. george", "st george", "utm", "utsc", "mississauga",
     "scarborough", "varsity", "robarts", "hart house", "sid smith", "bahen", "con hall", "convocation hall",
-    "skule", "arts & sci", "arts and sci", "first-year", "frosh", "college",
+    "skule", "arts & sci", "arts and sci", "first-year", "frosh", "college", "myhal",
 )  # fmt: skip
 ATTEMPTS = 3
 AVOID_RECENT_DAYS = 60
 # A candidate sharing this much of its answer list with a recent prompt is a rerun, however it's worded.
-MAX_ANSWER_OVERLAP = 0.5
+MAX_ANSWER_OVERLAP = 0.3
 # Models default to "name a building" over and over, so cap how many prompts share a category.
 MAX_PER_CATEGORY = 2
 # Some variety for the writer; the checker should be as consistent as it can be.
@@ -106,11 +113,19 @@ class Verdict(BaseModel):
     answers: list[AnswerCheck]
     decoys: list[DecoyCheck]
     missing_answers: list[GenAnswer]
+    # Every member of a closed set as its sources list it, so the code can diff it against the answers itself.
+    source_members: list[str]
+    # Where it checked the set. A closed prompt with none was only checked from memory.
+    sources: list[str]
+    # False when a player could type a real answer that's in neither the list nor missing_answers.
+    complete: bool
     ambiguous: bool
     problem: str
 
 
 class Verdicts(BaseModel):
+    """Every prompt's verdict. Each comes from its own request, so this is assembled, never asked for."""
+
     prompts: list[Verdict]
 
 
@@ -123,7 +138,7 @@ def _strict(schema: dict) -> dict:
 
 
 RESPONSE_SCHEMA = _strict(GenSet.model_json_schema())
-VERDICT_SCHEMA = _strict(Verdicts.model_json_schema())
+VERDICT_SCHEMA = _strict(Verdict.model_json_schema())
 
 INSTRUCTIONS = f"""\
 You write the daily prompt set for UofT Krillion, a trivia game for University of Toronto students.
@@ -142,7 +157,7 @@ Write exactly {CANDIDATES} prompts. Rules:
   - "closed": any prompt about specific facts: people, places, organizations, courses, events
     (colleges, presidents, UTM buildings, Arts & Science departments, famous alumni). Prefer
     these. List every member, not a sample, and set `set_size` to how many members the full set
-    has. Every qualifier in the prompt binds
+    has; a list shorter than its set is thrown out. Every qualifier in the prompt binds
     every answer: a UTM prompt takes only UTM buildings, an Arts & Science prompt only its own
     departments (not separate faculties or schools), a president prompt only people who held
     that office at UofT.
@@ -151,10 +166,21 @@ Write exactly {CANDIDATES} prompts. Rules:
     whatever comes to mind: the plain everyday word ("coffee", "pizza"), every sub-type, cuisine
     and dish (a food prompt needs katsu, ramen, sushi and skewers as well as fries), every brand
     and the boring obvious ones. If you can't list {OPEN_TARGET_ANSWERS}, pick another prompt.
-- Every answer must be real; never invent one. A closed prompt needs at least {TARGET_ANSWERS}
-  answers, listed from most to least obvious. List order seeds starting popularity. A fact
-  checker removes doubtful answers and any closed prompt left under {MIN_ANSWERS} (open: under
-  {OPEN_MIN_ANSWERS}) is thrown out.
+- Every answer must be real; never invent one. Closed prompts: completeness beats size. A
+  specific set is good ("a room or space in Myhal", "a Hart House club", "a building on the UTM
+  campus"), since broad ones run out, but only pick a set UofT publishes a list of (a building
+  directory, a map legend, a department or residence page, a history of the office), worded
+  with the same scope as that list, because the fact checker checks against it. No sets nobody
+  lists ("streets around campus", "Skule traditions"). List every member a student could name,
+  with old names and nicknames as aliases; if you aren't sure you know every member, pick
+  another set. Never stop early: list all of them, however many that is (30 or 60 is normal),
+  and never pad a small set with false answers. Only pick sets with at least {MIN_SET_SIZE}
+  members: the seven colleges or six subway stations give players too little choice.
+  {MIN_SET_SIZE} is a floor on the set, not a place to stop listing. Word the prompt plainly and
+  exactly as wide as the set: "Name a UTSC building", not "a building or main structural wing on
+  UTSC". List answers from most to least obvious; list order seeds starting popularity. A fact
+  checker removes doubtful answers, throws out any list it finds incomplete, and any closed
+  prompt left under {MIN_ANSWERS} (open: under {OPEN_MIN_ANSWERS}) is thrown out.
 - A real answer missing from the list scores zero for the player who typed it, which is the
   worst thing that can happen in this game.
 - The prompt text and hint set the scope players will answer. Word them exactly as narrowly as
@@ -180,14 +206,18 @@ Write exactly {CANDIDATES} prompts. Rules:
 """
 
 
-VERIFY_INSTRUCTIONS = f"""\
+VERIFY_INSTRUCTIONS = """\
 You are the fact checker for UofT Krillion, a trivia game for University of Toronto students.
-Players answer each prompt below by typing any valid answer. A wrong answer in the list lets
+Players answer the prompt below by typing any valid answer. A wrong answer in the list lets
 players score with something false; a real answer missing from it, or listed as a decoy, scores
-zero for the player who typed it. Check every prompt independently and judge it on facts, not
-on the `why` lines.
+zero and angers every player who typed it. Judge it on facts, not on the `why` lines.
 
-For each prompt, return:
+Search the web first. For a closed prompt, find the official or most authoritative list of the
+set (UofT's own pages first: utoronto.ca and its campus, faculty and college sites) and compare
+the answers against it member by member. For an open prompt, search where it helps (which food
+trucks park on St. George and what they serve). Don't rely on memory where a source can settle it.
+
+Return:
 - `id`: copied from the prompt.
 - `kind`: "closed" if the answers are specific facts (people, places, organizations, courses:
   colleges, presidents, buildings, departments, alumni), even with no official list; "open" if
@@ -196,6 +226,8 @@ For each prompt, return:
   exactly. `valid` is false if it isn't real, breaks any qualifier in the prompt (wrong campus,
   a separate faculty for a department prompt, someone who held the office elsewhere or held a
   different office), duplicates another answer, or has an alias that points at something else.
+  A real member your sources just don't mention (an old name, a nickname, an unlisted room) is
+  still valid: dropping a real answer is as bad as missing one.
   `more_aliases`: other ways students would type it that its aliases miss (short forms,
   misspellings, modifier variants like "double shot espresso"), or [].
 - `decoys`: one entry for every item in `decoys_meant_to_be_wrong`, none skipped, `decoy`
@@ -210,9 +242,19 @@ For each prompt, return:
   - Open prompts: be generous. Go through every sub-type (for apps: social, school, food,
     transit, banking) and add the everyday words and big brands first ("coffee", "ramen"), then
     rarer ones. Add as many as it takes.
-  - Closed prompts: add only members you're certain of, at most {MAX_CLOSED_ADDITIONS}, usually
-    none. Never pad the list: an answer from another campus, faculty or university is worse than
-    leaving a gap, because players are shown deep cuts as facts to learn.
+  - Closed prompts: add every member your sources list that the answers miss, under its official
+    name, with the nicknames students use as aliases and a `why` naming the source. Only add
+    what a source shows: an answer from another campus, faculty or university is worse than a
+    gap, because players are shown deep cuts as facts to learn.
+- `source_members`: for a closed prompt, every member of the set exactly as your sources name
+  it, all of them, whether or not the answers already have it; [] for an open prompt. Any the
+  answers miss are added to the game.
+- `sources`: for a closed prompt, the URLs of pages that list the set itself (a directory, a map
+  legend, an official list), or [] if you only found scattered mentions of some members.
+- `complete`: judged with your `missing_answers` added, since they fix the gaps you found. False
+  only if a player could still type a real answer that's in neither (a building, room, street or
+  truck your sources didn't settle, so you couldn't add it), or you couldn't find a source to
+  check a closed list against.
 - `ambiguous`: true if reasonable UofT students would disagree about what counts, or a closed
   prompt's wording or hint invites answers its set can't hold. For an open prompt that's worded
   more broadly than its list, add the missing answers instead.
@@ -221,8 +263,9 @@ For each prompt, return:
 
 
 def _examples() -> str:
-    # Examples must meet the same answer-count contract as generated candidates.
-    picks = [(PROMPTS_BY_ID["utm_departments"], "academics"), (PROMPTS_BY_ID["hart_house_clubs"], "sports_clubs")]
+    # Examples must meet the same answer-count contract as generated candidates. The writer copies their length, so
+    # they're the bank's broadest closed prompts, not ones sitting at the minimum.
+    picks = [(PROMPTS_BY_ID["utsc_map_locations"], "places"), (PROMPTS_BY_ID["libraries"], "academics")]
     examples = []
     for prompt, category in picks:
         example = {**prompt.to_dict(), "category": category, "kind": "closed", "set_size": len(prompt.answers)}
@@ -257,24 +300,21 @@ def build_request(day: date, recent: list[Prompt]) -> str:
     return "\n\n".join(parts)
 
 
-def build_verify_request(gen: GenSet) -> str:
-    prompts = [
-        {
-            "id": p.id,
-            "text": p.text,
-            # The hint sets scope as much as the text does, so decoys are judged against both.
-            "hint": p.hint,
-            "answers": [a.model_dump() for a in p.answers],
-            "decoys_meant_to_be_wrong": p.decoys,
-        }
-        for p in gen.prompts
-    ]
+def build_verify_request(p: GenPrompt) -> str:
+    prompt = {
+        "id": p.id,
+        "text": p.text,
+        # The hint sets scope as much as the text does, so decoys are judged against both.
+        "hint": p.hint,
+        "answers": [a.model_dump() for a in p.answers],
+        "decoys_meant_to_be_wrong": p.decoys,
+    }
     return "\n\n".join([
         VERIFY_INSTRUCTIONS,
         "Reply with only a JSON object matching this schema:",
         json.dumps(VERDICT_SCHEMA),
-        "The prompts:",
-        json.dumps({"prompts": prompts}, indent=1),
+        "The prompt:",
+        json.dumps(prompt, indent=1),
     ])  # fmt: skip
 
 
@@ -352,11 +392,19 @@ def _contains(outer: str, inner: str) -> bool:
 def apply_verdict(gen: GenPrompt, verdict: Verdict) -> GenPrompt:
     """Apply the verifier's per-item checks: drop wrong answers, promote defensible decoys, add what's missing.
 
-    A wrong golden answer hands the bonus to the deepest answer left. Raises ValueError if the prompt is ambiguous,
-    the verdict skipped too much of the list, or a closed list holds more answers than the set has.
+    A wrong golden answer hands the bonus to the deepest answer left. Raises ValueError if the prompt is ambiguous or
+    incomplete, the verdict skipped too much of the list, or a closed list's length doesn't match its set.
     """
     if verdict.ambiguous:
         raise ValueError(f"{gen.id}: ambiguous ({verdict.problem})")
+    # A real answer missing from the list scores zero and angers every player who typed it, so an incomplete list
+    # is thrown out rather than shipped.
+    if not verdict.complete:
+        raise ValueError(f"{gen.id}: the verifier says the list is incomplete")
+    if "closed" in (gen.kind, verdict.kind) and not verdict.sources:
+        raise ValueError(f"{gen.id}: the verifier found no source to check the set against")
+    if gen.kind == "closed" and len(gen.answers) + len(verdict.missing_answers) < gen.set_size:
+        raise ValueError(f"{gen.id}: {len(gen.answers)} answers for a set of {gen.set_size}, so it's a sample")
     checks = {normalize(c.name): c for c in verdict.answers}
     answers, judged, invalid = [], 0, set()
     for ans in gen.answers:
@@ -389,9 +437,12 @@ def apply_verdict(gen: GenPrompt, verdict: Verdict) -> GenPrompt:
         for m in verdict.missing_answers
         if m.name.strip() and m.why.strip() and normalize(m.name) not in invalid | wrong
     ]
+    # Asked to "add what's missing", the verifier leaves gaps; asked to list the set from its source, it gets it all. So
+    # the code does the diff. A sourced answer nobody types costs nothing; a missing one angers everyone who typed it.
     if verdict.kind == "closed":
-        room = gen.set_size - len(answers) - len(promoted) if gen.set_size else MAX_CLOSED_ADDITIONS
-        added = added[: max(0, min(MAX_CLOSED_ADDITIONS, room))]
+        added += _unlisted(verdict, [*answers, *promoted, *added], skip=invalid | wrong)
+    if verdict.kind == "closed" and len(added) > MAX_CLOSED_ADDITIONS:
+        raise ValueError(f"{gen.id}: the verifier found {len(added)} missing answers, so the list was a sample")
 
     golden = gen.golden
     if normalize(golden) in invalid and answers:
@@ -404,6 +455,31 @@ def apply_verdict(gen: GenPrompt, verdict: Verdict) -> GenPrompt:
     # Either model calling it open means players will type more than any list holds, so it needs the broad list.
     kind = "open" if "open" in (gen.kind, verdict.kind) else "closed"
     return gen.model_copy(update={"answers": answers, "decoys": decoys, "golden": golden, "kind": kind})
+
+
+def _unlisted(verdict: Verdict, known: list[GenAnswer], skip: set[str]) -> list[GenAnswer]:
+    """The verifier's source members that no answer or alias in `known` already covers."""
+    listed = Prompt(id="", text="", hint="", golden="", answers=[(a.name, *a.aliases) for a in known])
+    source = verdict.sources[0] if verdict.sources else "the official list"
+    new: list[GenAnswer] = []
+    for member in verdict.source_members:
+        member = member.strip()
+        # Exact and prefix matches only: a fuzzy match would pass "Erindale Studio Theatre" off as "Erindale Hall".
+        if not member or normalize(member) in skip or match_answer(listed, member, fuzzy=False) is not None:
+            continue
+        # The same name with or without initials and titles ("David R. Peterson", "The Honourable Pauline McGibbon").
+        words = _name_words(member)
+        if any(_name_words(n) <= words or words <= _name_words(n) for names in listed.answers for n in names):
+            continue
+        new.append(GenAnswer(name=member, aliases=[], why=f"Listed on {source}."))
+        listed = replace(listed, answers=[*listed.answers, (member,)])
+    return new
+
+
+def _name_words(name: str) -> frozenset[str]:
+    """A name's distinctive words: no initials or honorifics. Empty for one-word names, which match nothing."""
+    words = frozenset(w for w in normalize(name).split() if len(w) > 1) - NAME_TITLES
+    return words if len(words) > 1 else frozenset({name})
 
 
 def check_candidates(gen: GenSet, verdicts: Verdicts) -> list[tuple[str, Prompt]]:
@@ -462,20 +538,36 @@ class PromptSetGenerator:
         """Returns the verified set and the models that wrote and checked it."""
         request = build_request(day, recent)
         last: Exception | None = None
+        # Candidates that passed are kept across attempts: most get thrown out, so one batch rarely fills a day.
+        checked: list[tuple[str, Prompt]] = []
         for attempt in range(1, self._attempts + 1):
             try:
                 reply = self._writer.write(request, self._generator_model, RESPONSE_SCHEMA, GENERATOR_TEMPERATURE)
                 gen = parse_reply(reply)
-                reply = self._writer.write(
-                    build_verify_request(gen), self._verifier_model, VERDICT_SCHEMA, VERIFIER_TEMPERATURE
-                )
-                verdicts = parse_reply(reply, Verdicts)
+                verdicts = self._verify(gen)
                 source = f"{self._generator_model} + {self._verifier_model}"
-                return pick_set(check_candidates(gen, verdicts), recent), source
+                checked += check_candidates(gen, verdicts)
+                return pick_set(checked, recent), source
             except Exception as e:  # API errors and validation failures both get another try
                 log.warning("attempt %d/%d failed: %s", attempt, self._attempts, e)
                 last = e
         raise GenerationFailed(f"no valid set for {day} after {self._attempts} attempts") from last
+
+    def _verify(self, gen: GenSet) -> Verdicts:
+        """Checks each prompt in its own searching request. One that fails goes unjudged, which drops only it."""
+
+        def check(prompt: GenPrompt) -> Verdict | None:
+            try:
+                reply = self._writer.write(
+                    build_verify_request(prompt), self._verifier_model, VERDICT_SCHEMA, VERIFIER_TEMPERATURE, True
+                )
+                return parse_reply(reply, Verdict).model_copy(update={"id": prompt.id})
+            except Exception as e:  # noqa: BLE001 - one bad check shouldn't sink the other prompts
+                log.info("couldn't verify %s: %s", prompt.id, e)
+                return None
+
+        with ThreadPoolExecutor(VERIFY_WORKERS) as pool:
+            return Verdicts(prompts=[v for v in pool.map(check, gen.prompts) if v is not None])
 
 
 class Outcome(enum.Enum):

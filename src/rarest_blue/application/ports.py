@@ -102,6 +102,8 @@ Clock = Callable[[], date]
 class PromptWriter(Protocol):
     """Something that answers instructions with JSON: in production, an LLM. Writes prompt sets and fact-checks them."""
 
-    def write(self, request: str, model: str, response_schema: dict, temperature: float) -> str:
-        """Returns the raw JSON text of the reply."""
+    def write(
+        self, request: str, model: str, response_schema: dict, temperature: float, web_search: bool = False
+    ) -> str:
+        """Returns the raw JSON text of the reply. With `web_search`, the model may search the web before answering."""
         ...

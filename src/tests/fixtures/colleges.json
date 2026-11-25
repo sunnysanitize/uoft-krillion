@@ -1,0 +1,58 @@
+{
+  "id": "colleges",
+  "text": "Name one of UofT St. George\u2019s seven Arts & Science colleges",
+  "hint": "Arts & Science membership colleges; graduate and theology colleges are a different set.",
+  "golden": "Woodsworth College",
+  "answers": [
+    [
+      "Trinity College",
+      "trinity",
+      "trin"
+    ],
+    [
+      "Victoria College",
+      "victoria",
+      "vic"
+    ],
+    [
+      "University College",
+      "uc",
+      "university"
+    ],
+    [
+      "St. Michael's College",
+      "st michaels",
+      "saint michaels",
+      "st mikes",
+      "smc",
+      "st mike"
+    ],
+    [
+      "Innis College",
+      "innis"
+    ],
+    [
+      "New College",
+      "new"
+    ],
+    [
+      "Woodsworth College",
+      "woodsworth",
+      "woody"
+    ]
+  ],
+  "decoys": [
+    "Massey College",
+    "Knox College",
+    "Emmanuel College",
+    "Wycliffe College",
+    "Regis College",
+    "St. Hilda's College",
+    "Loretto College",
+    "Glendon College",
+    "Scarborough College",
+    "Erindale College",
+    "Huron University College",
+    "King's University College"
+  ]
+}

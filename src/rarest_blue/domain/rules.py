@@ -7,6 +7,8 @@ TORONTO = ZoneInfo("America/Toronto")
 LAUNCH_DATE = date(2026, 11, 1)
 
 PROMPTS_PER_DAY = 7
+# Applies to both generated sets and the built-in fallback bank. Aliases do not count.
+MIN_ACCEPTED_ANSWERS = 15
 TIME_LIMIT_SECONDS = 25
 # Points per rarity tier. The one hidden "One in a Krillion" answer per prompt scores a flat 100.
 TIER_POINTS = {"Common": 10, "Uncommon": 30, "Rare": 60, "Deep Cut": 85}

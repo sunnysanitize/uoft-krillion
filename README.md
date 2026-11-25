@@ -60,23 +60,28 @@ Don't point it at your dev database. With compose, run `docker compose exec db c
 
 ## Daily prompts
 
-Each night at 23:30 Toronto time, `python -m rarest_blue.entrypoints.cli.generate` builds tomorrow's 7 prompts in two LLM
+Each night at 23:30 Toronto time, `python -m rarest_blue.entrypoints.cli.generate` builds 7 prompts for two days ahead in two LLM
 passes on OpenRouter:
 
-1. **Generator** (`google/gemini-3.6-flash`) writes 12 candidate prompts with at least 20 answers each. Each has accepted answers, aliases, a
-   one-line explanation per answer, a golden answer, and decoys.
-2. **Verifier** (`openai/gpt-5.4-mini`, a different model family) checks every candidate on its own. It drops
-   ambiguous prompts and wrong answers. A decoy that turns out to be a valid answer becomes a rare answer.
+1. **Generator** (`google/gemini-3.6-flash`) writes 15 candidate prompts. Fixed-set prompts must be sets UofT
+   publishes a list of (a building directory, a department page, a history of the office) with at least 20 members,
+   listed in full; specific sets ("a room in Myhal") are fine. Open prompts (foods, drinks) are asked for 45 answers and need 30. Each
+   answer has aliases and a one-line explanation; each prompt has a golden answer and decoys.
+2. **Verifier** (`openai/gpt-5.4-mini`, a different model family) checks each candidate in its own request, with
+   OpenRouter web search. For a fixed set it finds the official list and returns every member; the code adds any the
+   generator missed. It drops wrong answers, and a decoy that turns out to be valid becomes an answer. A prompt is
+   thrown out if it's ambiguous, the verifier still finds it incomplete, a fixed set has no source page, or the list
+   was so short it was a sample. A day costs about $0.40–0.50 on OpenRouter.
 
 The code then checks what's left (enough answers, no colliding aliases, a real deep-cut golden answer, decoys that
 don't accidentally match a real answer) and picks the first 7 that pass, with at most 2 per category.
-If too few survive, it retries the whole thing up to 3 times. The set goes into the `daily_prompts` table, and at
+If too few survive, it retries up to 3 times, keeping the prompts that already passed. The set goes into the `daily_prompts` table, and at
 midnight the API serves the new day's row. Nothing gets redeployed.
 
 To keep each day different:
 
 - The generator sees every prompt from the last 60 stored days and is told not to repeat or reword them.
-- The code also enforces this. It drops any candidate whose answer list overlaps a recent prompt's by 50% or more,
+- The code also enforces this. It drops any candidate whose answer list overlaps a recent or same-day prompt's by 30% or more,
   however the question is worded.
 - Each date picks two categories for the generator to lean toward, so different days start from different places.
 - The generator runs at temperature 1 and the verifier at 0.
@@ -112,9 +117,11 @@ Edit `src/rarest_blue/domain/prompt_bank.py`. List the answers from most to leas
 order seeds the starting popularity. Set `golden` to that prompt's hidden bonus answer. Put the canonical name first in each tuple and its aliases after it.
 `tests/unit/test_matching.py` and `tests/unit/test_prompt_bank.py` catch colliding aliases, scoring decoys and
 obvious golden answers.
-Every fallback category must have a clear boundary, a complete accepted set, and an official reference in
-`PROMPT_SOURCES`. Arts & Science membership colleges and Toronto School of Theology colleges are separate
-questions: Knox is accepted in the latter. Broad, incomplete lists and subjective categories are excluded.
+Every fallback category must have at least 15 distinct accepted answers (aliases do not count), a clear boundary,
+a complete accepted set, and an official reference in `PROMPT_SOURCES`. The fallback selector enforces the same
+15-answer minimum as the generator. Small college, committee and insulin-team questions have been retired in
+favour of broader engineering, faculty, sports, library and program categories. Incomplete lists and subjective
+categories are excluded.
 Deploying a bank change affects future fallback sets; already stored daily sets and awarded scores remain stored.
 
 ## Config
@@ -135,22 +142,14 @@ See `deploy/README.md` for the setup and the security model, and `supabase/READM
 
 ## Frontend deployments and collaborator PRs
 
-The `web/` frontend deploys through the Vercel GitHub integration. This repository is private, so Vercel checks
-whether the commit author has access to the Vercel team. A PR can pass backend CI and merge successfully while
-its Vercel deployment is blocked. A failed Vercel check does not mean Git lost the changes.
+The `web/` frontend deploys through the Vercel GitHub integration. The repository is public, so Vercel builds
+commits from any collaborator who pushes to this repository, including commits that aren't authored by the Vercel
+owner. Every push gets a preview deployment, and merges to `main` deploy to production.
 
-For the current owner-only Vercel setup:
+1. Collaborators push their branches to this repository and open PRs using their own Git identities.
+2. Vercel posts a preview deployment on the PR. Merge it when it is ready, and `main` deploys to production.
 
-1. Collaborators push their branches and open PRs using their own Git identities.
-2. The Vercel owner (`sunnysanitize`) reviews and merges PRs with **Create a merge commit** on GitHub. This puts
-   an owner-authored merge commit on `main`, while preserving the collaborator's original commits and credit.
-3. Check the Vercel status on the new `main` commit to confirm deployment. Collaborator preview deployments
-   can remain blocked until they have Vercel access.
-
-If a collaborator already merged a PR and deployment is blocked, the owner can push a follow-up commit to
-`main` or create a deployment from their authenticated Vercel account. Keep the merged history and everyone's
-Git identity intact.
-
-To let collaborators deploy their own commits from this private repository, use a Vercel Pro team and add them
-with the appropriate project access. On Hobby, private-repository commits must be authored by the team owner.
+PRs from forks are different. Vercel holds those deployments until a member of the Vercel team authorizes them
+from the PR check, because a fork could change the build. Give regular contributors write access to this
+repository so that they can push branches here.
 See [Vercel's collaboration requirements](https://vercel.com/docs/deployments/troubleshoot-project-collaboration).

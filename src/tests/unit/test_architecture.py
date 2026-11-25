@@ -12,9 +12,9 @@ ALLOWED_THIRD_PARTY = {
     "domain": set(),
     "application": {"pydantic"},  # the LLM reply contract
     "infrastructure": {"psycopg", "httpx"},
-    "entrypoints": {"fastapi", "pydantic", "uvicorn"},
+    "entrypoints": {"fastapi", "pydantic", "uvicorn", "discord"},
 }
-THIRD_PARTY = {"fastapi", "pydantic", "psycopg", "httpx", "uvicorn", "starlette"}
+THIRD_PARTY = {"fastapi", "pydantic", "psycopg", "httpx", "uvicorn", "starlette", "discord"}
 
 
 def _imports(path: Path) -> set[str]:

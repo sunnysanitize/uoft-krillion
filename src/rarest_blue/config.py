@@ -26,6 +26,11 @@ class Settings:
     verifier_model: str = DEFAULT_VERIFIER_MODEL
     # Local testing only: exposes POST /api/dev/reset so a player can replay today. Never set in production.
     dev_reset: bool = False
+    # The review bot (entrypoints/discord_bot.py). Reviewers with the role (or Manage Server) can apply changes.
+    discord_bot_token: str = field(default="", repr=False)
+    discord_guild_id: int = 0
+    discord_review_channel_id: int = 0
+    discord_reviewer_role_id: int = 0
 
     def __repr__(self) -> str:  # never print the database password
         return (
@@ -44,4 +49,8 @@ class Settings:
             generator_model=env.get("GENERATOR_MODEL") or DEFAULT_GENERATOR_MODEL,
             verifier_model=env.get("VERIFIER_MODEL") or DEFAULT_VERIFIER_MODEL,
             dev_reset=env.get("DEV_RESET") == "1",
+            discord_bot_token=env.get("DISCORD_BOT_TOKEN", ""),
+            discord_guild_id=int(env.get("DISCORD_GUILD_ID") or 0),
+            discord_review_channel_id=int(env.get("DISCORD_REVIEW_CHANNEL_ID") or 0),
+            discord_reviewer_role_id=int(env.get("DISCORD_REVIEWER_ROLE_ID") or 0),
         )

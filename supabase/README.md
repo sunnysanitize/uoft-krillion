@@ -82,9 +82,32 @@ is refused, because players were scored against it. To undo a push, copy the bac
 `supabase/prompts/backups/` over the day's file and push again. `supabase/prompts/` is gitignored because the
 files hold every answer.
 
+## Reviewing in Discord
+
+A bot posts each new set to a private Discord channel about 20 minutes after the generator runs, and reviewers fix it
+there: `/add-answer`, `/add-alias`, `/remove-answer`, `/remove-decoy` and `/set-golden` post a checked suggestion with
+an **Apply** button, and `/review` reposts any stored day. Until a day goes live any fix can go in; once it's being
+played, only new answers and aliases, which rescore the players who typed them (like `review accept`).
+
+1. In the [Discord developer portal](https://discord.com/developers/applications), create an application, then under
+   **Bot** reset and copy the token. No privileged intents are needed.
+2. Under **OAuth2 → URL Generator**, tick the `bot` and `applications.commands` scopes and the View Channels, Send
+   Messages, Embed Links and Read Message History permissions, and open the URL to add the bot to your server.
+3. Make a private channel for reviewers (the posts show every answer) and a reviewer role. With Developer Mode on
+   (Discord settings → Advanced), right-click the server, channel and role to copy their ids.
+4. Fill in the `DISCORD_*` lines in `.env`, then run the bot from `src/`:
+
+```bash
+.venv/bin/pip install -r requirements-bot.txt
+set -a && source ../.env && set +a && .venv/bin/python -m rarest_blue.entrypoints.discord_bot
+```
+
+The bot only posts and applies changes while it's running. Anyone with the reviewer role, or Manage Server, can
+press Apply; the suggester can dismiss their own suggestion.
+
 ## Keeping it safe
 
-- `DATABASE_URL` is the master key. Keep it in `.env` (gitignored) and the host's secret store, never in `web/` or in
+- `DATABASE_URL` is the master key, and `DISCORD_BOT_TOKEN` lets anyone run the review bot as you. Keep it in `.env` (gitignored) and the host's secret store, never in `web/` or in
   any `NEXT_PUBLIC_*` variable.
 - The backend doesn't need the Data API, so you can turn it off in the dashboard's Data API settings. That's a
   second lock on the same door. Run `verify.sh` without the anon key afterwards, since the REST probe needs the API on.

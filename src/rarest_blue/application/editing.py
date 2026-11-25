@@ -1,17 +1,28 @@
-"""Use case: check a hand-edited prompt set before it replaces a stored one.
+"""Use case: check hand edits to a prompt set, whole files or one reviewer change at a time, before they're stored.
 
 Errors would break the day (a golden answer that can't be scored, two answers sharing an alias, a decoy that
 scores). Warnings are the generator's quality bars, which a human may knowingly relax.
+
+Once a day is being played, only new answers and aliases can go in, through review.accept so the players who typed
+them are rescored. Anything else would change scores players already have.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, replace
+from datetime import date
+from typing import Literal
 
 from ..domain import rules
 from ..domain.matching import match_answer, normalize
 from ..domain.models import Prompt
+from . import review
 from .generation import GOLDEN_MIN_FRACTION, GOLDEN_MIN_INDEX, MIN_ANSWERS, UOFT_ANCHORS
+from .ports import UnitOfWork
+
+ChangeKind = Literal["add_answer", "add_alias", "remove_answer", "remove_decoy", "set_golden"]
+# The only changes that can't take points away from anyone, so the only ones allowed once a day is being played.
+LIVE_KINDS = {"add_answer", "add_alias"}
 
 
 @dataclass
@@ -90,3 +101,114 @@ def _check_prompt(p: Prompt, report: Report) -> None:
         warn(f"{p.id}: only {len(canon)} answers (the generator wants {MIN_ANSWERS}+); missing answers score zero")
     if not any(a in p.text.lower() for a in UOFT_ANCHORS):
         warn(f"{p.id}: the text doesn't name UofT or a UofT place")
+
+
+@dataclass(frozen=True)
+class Change:
+    """One reviewer edit to a stored prompt.
+
+    `name` is the answer (or decoy) acted on. `text` is the new alias for add_alias and the explanation for
+    set_golden; `aliases` go with a new answer.
+    """
+
+    kind: ChangeKind
+    prompt_id: str
+    name: str
+    text: str = ""
+    aliases: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict:
+        return {k: v for k, v in asdict(self).items() if v} | {"aliases": list(self.aliases)}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> Change:
+        return cls(
+            kind=data["kind"],
+            prompt_id=data["prompt_id"],
+            name=data["name"],
+            text=data.get("text", ""),
+            aliases=tuple(data.get("aliases", ())),
+        )
+
+
+def apply_change(prompt: Prompt, change: Change) -> Prompt:
+    """The prompt with the change made. Raises ValueError if it doesn't make sense for this prompt."""
+    name = change.name.strip()
+    if change.kind == "add_answer":
+        names = (name, *(a.strip() for a in change.aliases if a.strip()))
+        for n in names:
+            if (hit := match_answer(prompt, n)) is not None:
+                raise ValueError(f"'{n}' already counts as '{hit}'")
+        # Just before the golden one, like the generator's additions, so the golden stays the deep cut.
+        at = prompt.canonical_answers.index(prompt.golden) if prompt.golden in prompt.canonical_answers else None
+        answers = list(prompt.answers)
+        answers.insert(len(answers) if at is None else at, names)
+        return _without_scoring_decoys(replace(prompt, answers=answers))
+
+    if change.kind == "remove_decoy":
+        kept = [d for d in prompt.decoys if normalize(d) != normalize(name)]
+        if len(kept) == len(prompt.decoys):
+            raise ValueError(f"'{name}' isn't a decoy of {prompt.id}")
+        return replace(prompt, decoys=kept)
+
+    canon = _answer(prompt, name)
+    if change.kind == "add_alias":
+        alias = change.text.strip()
+        if (hit := match_answer(prompt, alias)) is not None:
+            raise ValueError(f"'{alias}' already counts as '{hit}'")
+        answers = [(*names, alias) if names[0] == canon else names for names in prompt.answers]
+        return _without_scoring_decoys(replace(prompt, answers=answers))
+    if change.kind == "remove_answer":
+        if canon == prompt.golden:
+            raise ValueError(f"'{canon}' is the golden answer; pick a new golden first")
+        return replace(prompt, answers=[names for names in prompt.answers if names[0] != canon])
+    if change.kind == "set_golden":
+        # A new golden needs its own explanation; the old one was about a different answer.
+        why = change.text.strip() or (prompt.golden_why if canon == prompt.golden else "")
+        return replace(prompt, golden=canon, golden_why=why)
+    raise ValueError(f"unknown change '{change.kind}'")
+
+
+def is_live(uow: UnitOfWork, day: date, today: date) -> bool:
+    """Being played: today or earlier, or already guessed on (a clock skew shouldn't let answers change under it)."""
+    return day <= today or any(s.players for s in uow.guesses.stats(day).values())
+
+
+def preview_change(uow: UnitOfWork, day: date, today: date, change: Change) -> tuple[Prompt, Report]:
+    """What the prompt would become and the day's check report. Raises ValueError if the change can't be made."""
+    prompts = uow.prompts.get(day)
+    if prompts is None:
+        raise ValueError(f"{day.isoformat()} has no stored set yet")
+    prompt = next((p for p in prompts if p.id == change.prompt_id), None)
+    if prompt is None:
+        raise ValueError(f"{day.isoformat()} has no prompt '{change.prompt_id}'")
+    if change.kind not in LIVE_KINDS and is_live(uow, day, today):
+        raise ValueError(f"{day.isoformat()} is already being played, so only new answers and aliases can go in")
+    updated = apply_change(prompt, change)
+    return updated, check_set([updated if p.id == prompt.id else p for p in prompts])
+
+
+def commit_change(uow: UnitOfWork, day: date, today: date, change: Change) -> int:
+    """Check and store the change. Returns how many guesses were rescored (always 0 before the day goes live)."""
+    updated, report = preview_change(uow, day, today, change)
+    if not report.ok:
+        raise ValueError("; ".join(report.errors))
+    if not is_live(uow, day, today):
+        uow.prompts.replace_prompt(day, updated)
+        return 0
+    if change.kind == "add_alias":
+        return review.accept(uow, day, change.prompt_id, change.text, change.name)
+    n = review.accept(uow, day, change.prompt_id, change.name)
+    return n + sum(review.accept(uow, day, change.prompt_id, a, change.name) for a in change.aliases if a.strip())
+
+
+def _answer(prompt: Prompt, name: str) -> str:
+    canon = match_answer(prompt, name, fuzzy=False)
+    if canon is None:
+        raise ValueError(f"'{name}' isn't an answer to {prompt.id}")
+    return canon
+
+
+def _without_scoring_decoys(prompt: Prompt) -> Prompt:
+    # A decoy that now scores would mislead the autocomplete.
+    return replace(prompt, decoys=[d for d in prompt.decoys if match_answer(prompt, d) is None])
